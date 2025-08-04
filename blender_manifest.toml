@@ -1,0 +1,65 @@
+# blender_manifest.toml
+# Manifest file for the BL Perspective Transform Extension
+
+# Blender Extension Manifest
+schema_version = "1.0.0"
+id = "BL_PerspectiveTransform"
+version = "1.0.0"
+
+name = "BL Perspective Transform"
+tagline = "Use corner handles for perspective distortion in the Blender VSE Preview window"
+type = "add-on"
+
+# Author and maintainer info
+author = "usrname0"
+maintainer = "usrname0"
+
+# Links
+website = "https://github.com/usrname0/BL_PerspectiveTransform"
+
+# Tags for discoverability
+tags = ["Sequencer", "User Interface"]
+
+# Requirements
+blender_version_min = "4.4.0"
+
+# License - must be GPL compatible
+license = ["SPDX:GPL-3.0-or-later"]
+
+# Description - must be clear about all functionality
+description = """A perspective transformation interface for Blender's Video Sequence Editor (VSE).
+
+Features:
+• Apply perspective distortion using 4 corner handles
+• Click and drag corner handles for perspective transformation in the VSE Preview window
+• Select the perspective tool via toolbar, menu or shortcut (default "P")
+• Respects user's custom-keybinds
+• Works with all strip types that support transformation
+• Real-time preview of perspective changes
+"""
+
+# Copyright notices
+copyright = [
+    "2025 usrname0",
+    "2007 Original VSE Transform Tools by kgeogeo, DoubleZ, doakey3, NathanLovato",
+]
+
+# Build configuration
+[build]
+paths_exclude_pattern = [
+    "__pycache__/",
+    "*.pyc",
+    ".*",
+    "/.git/",
+    "/.gitignore",
+    "/.github/",
+	"/icons/*.png",
+	"/icons/*.svg",
+    "/docs/",
+    "/tests/",
+    "/*.md",
+    "/*.zip",
+    "/zips/",
+    "/.vscode/",
+    "/examples/",
+]
