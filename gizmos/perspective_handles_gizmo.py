@@ -80,8 +80,9 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 color = (*self.color, self.alpha)
             
             if self.handle_type == "center":
-                # Center handle - use custom perspective symbol drawing
-                self._draw_perspective_symbol(color)
+                # Center symbol - always white, never highlights
+                white_color = (1.0, 1.0, 1.0, 0.8)
+                self._draw_perspective_symbol(white_color)
             elif self.handle_type == "inner_corner":
                 # Inner corner handles - white squares (perspective corners)
                 self._draw_handle_square(color, context)
@@ -134,42 +135,31 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 self._draw_handle_square(color, context)
     
     def _draw_perspective_symbol(self, color):
-        """Draw the perspective symbol (for center handle)"""
+        """Draw the perspective symbol - simple single line creating perspective illusion"""
         try:
             center_pos = self.matrix_basis.translation
             center_x = center_pos.x
             center_y = center_pos.y
             
-            # Symbol dimensions - simple diamond shape
-            size = 6
+            # Symbol dimensions
+            size = 8
             
             line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
             gpu.state.line_width_set(1.5)
             line_shader.bind()
             line_shader.uniform_float("color", color)
             
-            # Draw diamond shape representing perspective distortion
-            diamond_vertices = [
-                (center_x, center_y + size),      # Top
-                (center_x + size, center_y),      # Right
-                (center_x, center_y - size),      # Bottom
-                (center_x - size, center_y),      # Left
-                (center_x, center_y + size)       # Close shape
+            # Single line creating perspective illusion - left side full height, right side shorter
+            perspective_vertices = [
+                (center_x - size, center_y - size),      # Bottom-left (full height)
+                (center_x - size, center_y + size),      # Top-left (full height)
+                (center_x + size, center_y + size * 0.6),  # Top-right (scaled down)
+                (center_x + size, center_y - size * 0.6),  # Bottom-right (scaled down)
+                (center_x - size, center_y - size)       # Back to start (close the shape)
             ]
             
-            batch = batch_for_shader(line_shader, 'LINE_STRIP', {"pos": diamond_vertices})
+            batch = batch_for_shader(line_shader, 'LINE_STRIP', {"pos": perspective_vertices})
             batch.draw(line_shader)
-            
-            # Add inner cross to indicate transform center
-            cross_size = 3
-            cross_lines = [
-                [(center_x - cross_size, center_y), (center_x + cross_size, center_y)],  # Horizontal
-                [(center_x, center_y - cross_size), (center_x, center_y + cross_size)]   # Vertical
-            ]
-            
-            for line in cross_lines:
-                batch = batch_for_shader(line_shader, 'LINES', {"pos": line})
-                batch.draw(line_shader)
             
             gpu.state.line_width_set(1.0)
             
@@ -258,9 +248,11 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         if not strip or not hasattr(strip, 'transform'):
             return {'RUNNING_MODAL'}
         
-        # Get current mouse position in view space (like EasyCrop approach)
+        # Simple approach: Use current mouse position directly
         view2d = context.region.view2d
         mouse_view_pos = view2d.region_to_view(event.mouse_region_x, event.mouse_region_y)
+        
+        print(f"Debug: Direct mouse positioning - Screen: ({event.mouse_region_x}, {event.mouse_region_y}) -> View: ({mouse_view_pos[0]:.2f}, {mouse_view_pos[1]:.2f})")
         
         # Get effective corners for perspective calculation (respects existing transforms)
         from ..operators.perspective_core import get_effective_corners_for_perspective, store_original_corners_in_strip
@@ -279,16 +271,20 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             res_x = scene.render.resolution_x
             res_y = scene.render.resolution_y
             
-            # Convert view coordinates to strip coordinates
+            # Direct mouse positioning: Convert mouse position to strip coordinates
             strip_mouse_x = mouse_view_pos[0] + res_x / 2
             strip_mouse_y = mouse_view_pos[1] + res_y / 2
+            
+            print(f"Debug: Simple conversion - View: ({mouse_view_pos[0]:.2f}, {mouse_view_pos[1]:.2f}) -> Strip: ({strip_mouse_x:.1f}, {strip_mouse_y:.1f})")
             
             if self.select_id < 4:
                 # INNER HANDLES (0-3): Control perspective distortion within red boundary
                 # Apply boundary constraints to keep handles within VSE rectangle
                 constrained_pos = self._constrain_to_boundary(Vector([strip_mouse_x, strip_mouse_y]), context)
                 
-                # Update perspective corner positions for homography 
+                print(f"Debug: Handle {self.select_id} - Before constraint: ({strip_mouse_x:.1f}, {strip_mouse_y:.1f}) -> After constraint: ({constrained_pos.x:.1f}, {constrained_pos.y:.1f})")
+                
+                # Update perspective corner positions for homography using actual index
                 dst_corners[self.select_id] = constrained_pos
                 
                 # Update the handle position to follow the mouse (with constraints)
@@ -320,7 +316,13 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                     # - No more erratic scaling from decomposed homography
                     
                     # Store perspective corner offsets for position persistence
-                    self._store_perspective_corner_offsets(strip, scene, dst_corners)
+                    # Only update the specific handle being dragged, preserve others
+                    self._store_single_handle_offset(strip, scene, self.select_id, constrained_pos)
+                    
+                    # Force refresh of the gizmo group to update all handle positions
+                    # This ensures other handles reflect any changes from the storage system
+                    if hasattr(self, 'group') and hasattr(self.group, 'refresh'):
+                        self.group.refresh(context)
                     
                     # TODO: Apply perspective transformation via texture coordinates
                     
@@ -471,6 +473,9 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                     'offset_y': strip.transform.offset_y
                 }
         
+        # Simple approach: Just store initial strip state for potential restoration
+        print(f"Debug: Starting modal drag for handle {getattr(self, 'select_id', 'unknown')}")
+        
         return {'RUNNING_MODAL'}
     
     def _store_perspective_corner_offsets(self, strip, scene, perspective_corners):
@@ -536,6 +541,106 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         except Exception as e:
             print(f"Warning: Could not store perspective corner offsets: {e}")
     
+    def _store_single_handle_offset(self, strip, scene, handle_id, new_position):
+        """
+        Store offset for a single handle while preserving other handle positions.
+        
+        Args:
+            strip: Blender sequence strip
+            scene: Blender scene  
+            handle_id: Which handle (0-3) is being updated
+            new_position: New position for this handle (STRIP COORDINATES)
+        """
+        if not strip or handle_id < 0 or handle_id > 3:
+            return
+            
+        try:
+            # Get current rotation and flip state
+            current_rotation = 0
+            if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
+                current_rotation = strip.transform.rotation
+                
+            # Get unrotated VSE corners for rotation-invariant storage
+            unrotated_vse_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_unrotated_strip_geometry(strip, scene)
+            
+            # Simple approach: Store handle at its actual index, no remapping
+            storage_handle_id = handle_id
+                
+            print(f"Debug: Simple storage - handle {handle_id} stored at index {storage_handle_id}")
+            print(f"Debug: MODAL STORAGE - Current scale: ({scale_x:.3f}, {scale_y:.3f}) for handle {handle_id}")
+            
+            # Get existing proportional offsets (always use proportional system now)
+            from ..operators.perspective_core import get_perspective_offsets_from_strip
+            existing_offsets = get_perspective_offsets_from_strip(strip)
+            
+            if not existing_offsets:
+                # Initialize with zero proportional offsets (handles at VSE corners)
+                existing_offsets = [Vector([0.0, 0.0]) for _ in range(4)]
+                print(f"Debug: Initializing proportional offsets - no previous offsets found")
+            else:
+                print(f"Debug: Found existing proportional offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in existing_offsets]}")
+            
+            # Calculate current unrotated perspective positions for all handles
+            # Use storage indices for consistency with visual remapping
+            current_unrotated_perspective_corners = []
+            for i in range(4):
+                if i == storage_handle_id:
+                    # For the dragged handle (at storage position), un-rotate the new position
+                    pivot = Vector((pivot_x, pivot_y))
+                    angle = -current_rotation  # Un-rotate
+                    if flip_x != flip_y:  # Handle flip compensation
+                        angle = -angle
+                    unrotated_new_pos = self._rotate_point(new_position, angle, pivot)
+                    current_unrotated_perspective_corners.append(unrotated_new_pos)
+                    print(f"Debug: Handle {i} (DRAGGED, visual {handle_id}) - New position: ({new_position.x:.1f},{new_position.y:.1f}) -> Unrotated: ({unrotated_new_pos.x:.1f},{unrotated_new_pos.y:.1f})")
+                else:
+                    # For other handles, convert proportional offset to absolute position
+                    vse_corner = unrotated_vse_corners[i]
+                    proportional_offset = existing_offsets[i]
+                    
+                    # Convert proportional offset to absolute offset
+                    vse_width = unrotated_vse_corners[2].x - unrotated_vse_corners[0].x
+                    vse_height = unrotated_vse_corners[2].y - unrotated_vse_corners[0].y
+                    absolute_offset_x = proportional_offset.x * vse_width
+                    absolute_offset_y = proportional_offset.y * vse_height
+                    unrotated_perspective_pos = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
+                    print(f"Debug: Handle {i} (PRESERVED) - VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) -> Absolute: ({absolute_offset_x:.1f},{absolute_offset_y:.1f}) = Position: ({unrotated_perspective_pos.x:.1f},{unrotated_perspective_pos.y:.1f})")
+                    
+                    current_unrotated_perspective_corners.append(unrotated_perspective_pos)
+            
+            # Calculate proportional offsets instead of absolute offsets
+            # This makes them scale-invariant
+            unrotated_proportional_corners = []
+            vse_width = unrotated_vse_corners[2].x - unrotated_vse_corners[0].x  # right - left
+            vse_height = unrotated_vse_corners[2].y - unrotated_vse_corners[0].y  # top - bottom
+            
+            for vse_corner, perspective_corner in zip(unrotated_vse_corners, current_unrotated_perspective_corners):
+                # Calculate proportional offset (0.0 to 1.0 range)
+                if vse_width != 0 and vse_height != 0:
+                    prop_offset_x = (perspective_corner.x - vse_corner.x) / vse_width
+                    prop_offset_y = (perspective_corner.y - vse_corner.y) / vse_height
+                else:
+                    prop_offset_x = 0.0
+                    prop_offset_y = 0.0
+                    
+                unrotated_proportional_corners.append(Vector([prop_offset_x, prop_offset_y]))
+            
+            # Store proportional offsets instead of absolute offsets
+            from ..operators.perspective_core import store_perspective_offsets_in_strip
+            store_perspective_offsets_in_strip(strip, 
+                                               [Vector([0.0, 0.0]) for _ in range(4)],  # Dummy VSE corners (not used with proportional)
+                                               unrotated_proportional_corners)  # Store proportional values
+            
+            # All offsets are now proportional by default (no need for backwards compatibility flag)
+            
+            print(f"Debug: Updated single handle {handle_id} with PROPORTIONAL offsets")
+            print(f"Debug: VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
+            for i, prop_offset in enumerate(unrotated_proportional_corners):
+                print(f"Debug: Handle {i} proportional offset: ({prop_offset.x:.3f}, {prop_offset.y:.3f})")
+            
+        except Exception as e:
+            print(f"Warning: Could not store single handle offset: {e}")
+    
     def _get_unrotated_strip_geometry(self, strip, scene):
         """
         Get strip geometry as if rotation was 0, without modifying the strip.
@@ -589,9 +694,40 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         return Vector([new_x + origin.x, new_y + origin.y])
     
     def exit(self, context, cancel):
-        """Exit perspective transform with cursor restoration"""
-        # Implement cursor restoration like in crop gizmo if needed
-        pass
+        """Exit perspective transform with cursor warping - EasyCrop implementation"""
+        if self.handle_type != "center":
+            # Deferred cursor warp with timer (EasyCrop approach)
+            if not cancel:
+                try:
+                    # Calculate final handle position in window coordinates
+                    region = context.region
+                    if region and hasattr(self, 'matrix_basis'):
+                        # Get handle position from matrix (screen coordinates)
+                        handle_screen_pos = self.matrix_basis.translation
+                        
+                        # Convert to window coordinates
+                        final_x = int(region.x + handle_screen_pos.x)
+                        final_y = int(region.y + handle_screen_pos.y)
+                        
+                        def deferred_cursor_warp():
+                            try:
+                                # Warp cursor and restore modal state (EasyCrop order)
+                                bpy.context.window.cursor_warp(final_x, final_y)
+                                bpy.context.window.cursor_modal_restore()
+                            except Exception:
+                                pass
+                            return None
+                        
+                        # Hide cursor immediately (EasyCrop approach)
+                        bpy.context.window.cursor_modal_set('NONE')
+                        
+                        # Schedule cursor warp with 50ms delay (EasyCrop timing)
+                        bpy.app.timers.register(deferred_cursor_warp, first_interval=0.05)
+                        
+                        print(f"Debug: EasyCrop-style cursor warp scheduled to ({final_x}, {final_y})")
+                        
+                except Exception:
+                    pass
 
 
 class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
@@ -600,7 +736,7 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
     bl_label = "Perspective Transform Handles"
     bl_space_type = 'SEQUENCE_EDITOR'
     bl_region_type = 'PREVIEW'
-    bl_options = {'PERSISTENT'}
+    bl_options = {'SHOW_MODAL_ALL'}
     
     @classmethod
     def poll(cls, context):
@@ -684,9 +820,16 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
                 gz.hide = True
             return
         
+        
         # Get current strip geometry
         try:
             corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
+            
+            # Debug flip states and corner positions
+            if flip_x or flip_y:
+                print(f"Debug: FLIP STATE - flip_x={flip_x}, flip_y={flip_y}")
+                for i, corner in enumerate(corners):
+                    print(f"Debug: Corner {i}: ({corner.x:.1f}, {corner.y:.1f})")
         except:
             for gz in self.gizmos:
                 gz.hide = True
@@ -732,17 +875,22 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
                 screen_corner = screen_corners[i]  # SCREEN COORDINATES from VSE corners
                 
                 # Check for stored perspective corner positions (returns SCREEN COORDINATES)
-                stored_positions = self._get_stored_perspective_positions(strip, scene, view2d, res_x, res_y)
+                stored_positions = None
+                try:
+                    stored_positions = self._get_stored_perspective_positions(strip, scene, view2d, res_x, res_y)
+                except Exception as e:
+                    print(f"Warning: Could not get stored perspective positions: {e}")
+                    stored_positions = None
                 
                 if stored_positions and i < len(stored_positions):
                     # Use stored perspective position (SCREEN COORDINATES)
                     handle_x, handle_y = stored_positions[i]
-                    print(f"Debug: Handle {i} using STORED position (screen): ({handle_x:.1f},{handle_y:.1f})")
+                    print(f"Debug: Handle {i} using STORED position (screen): ({handle_x:.1f},{handle_y:.1f}) vs VSE corner: ({screen_corner.x:.1f},{screen_corner.y:.1f})")
                 else:
-                    # Default to strip corner positions (SCREEN COORDINATES)
+                    # Default to exact VSE corner positions
                     handle_x = screen_corner.x
                     handle_y = screen_corner.y
-                    print(f"Debug: Handle {i} using DEFAULT VSE corner (screen): ({handle_x:.1f},{handle_y:.1f})")
+                    print(f"Debug: Handle {i} using VSE corner (screen): ({handle_x:.1f},{handle_y:.1f})")
                 
                 # Set position using screen coordinates (SCREEN COORDINATES -> MATRIX)
                 gz.matrix_basis = Matrix.Translation((handle_x, handle_y, 0))
@@ -767,6 +915,16 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         
         # Draw red boundary outline (VSE rectangle bounds)
         self._draw_boundary_outline()
+    
+    def draw_prepare(self, context):
+        """Called before drawing - ensures frequent updates for zoom responsiveness"""
+        # Force refresh when viewport changes (zoom/pan)
+        # This ensures handles and boundary update immediately with viewport changes
+        scene = context.scene
+        if scene and scene.sequence_editor and scene.sequence_editor.active_strip:
+            # Trigger position recalculation
+            self.refresh(context)
+        
     
     def _get_stored_perspective_positions(self, strip, scene, view2d, res_x, res_y):
         """
@@ -802,17 +960,32 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             # Get UNROTATED VSE corners without modifying the strip
             unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_unrotated_strip_geometry(strip, scene)
             
-            print(f"Debug: Loading ROTATION-INVARIANT positions")
-            print(f"Debug: Current rotation: {math.degrees(current_rotation):.1f}°")
-            print(f"Debug: Unrotated VSE corners: {[f'({c.x:.1f},{c.y:.1f})' for c in unrotated_corners]}")
-            print(f"Debug: Stored offsets: {[f'({o.x:.1f},{o.y:.1f})' for o in offsets]}")
+            # Calculate current VSE dimensions for proportional offset conversion
+            vse_width = unrotated_corners[2].x - unrotated_corners[0].x  # right - left
+            vse_height = unrotated_corners[2].y - unrotated_corners[0].y  # top - bottom
             
-            # Apply offsets to unrotated corners to get unrotated perspective positions
+            print(f"Debug: NORMAL LOADING - Proportional positions")
+            print(f"Debug: Current rotation: {math.degrees(current_rotation):.1f}°")
+            print(f"Debug: Current scale: ({scale_x:.3f}, {scale_y:.3f})")
+            print(f"Debug: Current VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
+            print(f"Debug: Unrotated VSE corners: {[f'({c.x:.1f},{c.y:.1f})' for c in unrotated_corners]}")
+            print(f"Debug: Stored proportional offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
+            
+            # Simple approach: Use offsets as stored, no remapping or direction adjustment
+            remapped_offsets = offsets
+            
+            print(f"Debug: Simple approach - Using stored offsets directly: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
+            
+            # Apply remapped proportional offsets to current VSE dimensions
             unrotated_perspective_corners = []
-            for i, (vse_corner, offset) in enumerate(zip(unrotated_corners, offsets)):
-                unrotated_perspective_corner = Vector([vse_corner.x + offset.x, vse_corner.y + offset.y])
+            for i, (vse_corner, proportional_offset) in enumerate(zip(unrotated_corners, remapped_offsets)):
+                # Convert proportional offset back to absolute offset based on current VSE dimensions
+                absolute_offset_x = proportional_offset.x * vse_width
+                absolute_offset_y = proportional_offset.y * vse_height
+                
+                unrotated_perspective_corner = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
                 unrotated_perspective_corners.append(unrotated_perspective_corner)
-                print(f"Debug: Handle {i} - Unrotated VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Offset: ({offset.x:.1f},{offset.y:.1f}) = Unrotated Perspective: ({unrotated_perspective_corner.x:.1f},{unrotated_perspective_corner.y:.1f})")
+                print(f"Debug: Handle {i} - VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) * Dimensions: ({vse_width:.1f},{vse_height:.1f}) = Absolute: ({absolute_offset_x:.1f},{absolute_offset_y:.1f}) = Final: ({unrotated_perspective_corner.x:.1f},{unrotated_perspective_corner.y:.1f})")
             
             # Rotate perspective corners to current rotation
             pivot = Vector((pivot_x, pivot_y))
@@ -844,6 +1017,58 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         except Exception as e:
             print(f"Warning: Could not retrieve stored perspective positions: {e}")
             return None
+    
+    def _get_unrotated_strip_geometry(self, strip, scene):
+        """
+        Get strip geometry as if rotation was 0, without modifying the strip.
+        
+        Returns:
+            Tuple of (corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y))
+        """
+        from ..operators.perspective_core import get_strip_geometry_with_flip_support
+        
+        # Get current geometry
+        rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
+        
+        # Get current rotation
+        current_rotation = 0
+        if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
+            current_rotation = strip.transform.rotation
+        
+        if current_rotation == 0:
+            # No rotation - return as is
+            return rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
+        
+        # Un-rotate the corners to get unrotated geometry
+        pivot = Vector((pivot_x, pivot_y))
+        unrotated_corners = []
+        
+        for corner in rotated_corners:
+            # Un-rotate by applying negative rotation
+            angle = -current_rotation
+            if flip_x != flip_y:  # Handle flip compensation
+                angle = -angle
+                
+            unrotated_corner = self._rotate_point(corner, angle, pivot)
+            unrotated_corners.append(unrotated_corner)
+        
+        return unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
+    
+    def _rotate_point(self, point, angle, origin):
+        """Rotate a 2D point around an origin"""
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        
+        # Translate to origin
+        x = point.x - origin.x
+        y = point.y - origin.y
+        
+        # Rotate
+        new_x = x * cos_a - y * sin_a
+        new_y = x * sin_a + y * cos_a
+        
+        # Translate back
+        return Vector([new_x + origin.x, new_y + origin.y])
     
     def _draw_boundary_outline(self):
         """Draw red outline showing VSE rectangle bounds"""
