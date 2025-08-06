@@ -4,13 +4,6 @@ BL Perspective Transform lets you click and drag handles to do a perspective tra
 
 It can be accessed via the preview window toolbar, menus or keyboard shortcut (default "P").
 
-Also credit to nickberckley for gizmo tips and custom icon assistance https://github.com/nickberckley/bool_tool
-
- ![demo](./examples/easycrop-demo1.png)
-
-Quick breakdown of menu options, etc:
-
- ![demo](./examples/easycrop-menu.png)
 
 ## Compatibility
 
@@ -20,8 +13,6 @@ Quick breakdown of menu options, etc:
 
 ## Auto Installation
 ![Auto Install 1](./examples/install1.png)
-
-![Auto Install 2](./examples/install2_auto.png)
 
 ## Manual Installation
 
