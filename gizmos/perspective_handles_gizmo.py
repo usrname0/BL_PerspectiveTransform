@@ -306,14 +306,12 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 try:
                     homography = calculate_homography_matrix(original_corners, dst_corners)
                     
-                    # Store the homography matrix in the strip
-                    from ..operators.perspective_core import store_perspective_matrix_in_strip
+                    # Store the homography matrix and enable GPU rendering
+                    from ..operators.perspective_core import store_perspective_matrix_in_strip, apply_perspective_to_strip
                     store_perspective_matrix_in_strip(strip, homography)
                     
-                    # DECOUPLED FROM VSE TRANSFORMS:
-                    # - VSE rectangle stays unchanged (native transforms work normally)
-                    # - We only store perspective data for future rendering
-                    # - No more erratic scaling from decomposed homography
+                    # Enable GPU-based perspective distortion overlay
+                    apply_perspective_to_strip(strip, homography)
                     
                     # Store perspective corner offsets for position persistence
                     # Only update the specific handle being dragged, preserve others
@@ -444,9 +442,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         if scene.sequence_editor:
             strip = scene.sequence_editor.active_strip
             if strip and hasattr(strip, 'transform'):
-                # Clear perspective matrix
-                from ..operators.perspective_core import clear_perspective_matrix_from_strip
+                # Clear perspective matrix and GPU rendering
+                from ..operators.perspective_core import clear_perspective_matrix_from_strip, _disable_perspective_rendering
                 clear_perspective_matrix_from_strip(strip)
+                _disable_perspective_rendering(strip)
                 
                 # Reset basic transform properties
                 strip.transform.scale_x = 1.0
@@ -915,6 +914,12 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         
         # Draw red boundary outline (VSE rectangle bounds)
         self._draw_boundary_outline()
+        
+        # Draw perspective distortion preview lines
+        self._draw_perspective_preview_lines(context)
+        
+        # Draw perspective grid overlay (if enabled)
+        self._draw_perspective_grid_overlay(context)
     
     def draw_prepare(self, context):
         """Called before drawing - ensures frequent updates for zoom responsiveness"""
@@ -1095,6 +1100,132 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             batch.draw(line_shader)
             
             gpu.state.line_width_set(1.0)  # Reset line width
+            
+        except Exception as e:
+            pass
+    
+    def _draw_perspective_preview_lines(self, context):
+        """Draw cyan lines connecting handles to show perspective distortion preview"""
+        if len(self.gizmos) < 4:
+            return
+            
+        try:
+            # Get handle positions from gizmo matrices
+            handle_positions = []
+            for i in range(4):  # First 4 gizmos are corner handles
+                if i < len(self.gizmos) and hasattr(self.gizmos[i], 'matrix_basis'):
+                    pos = self.gizmos[i].matrix_basis.translation
+                    handle_positions.append((pos.x, pos.y))
+                else:
+                    return  # Not enough handles
+            
+            # Draw cyan perspective preview lines connecting the handles
+            perspective_color = (0.0, 1.0, 1.0, 0.6)  # Cyan with transparency
+            
+            line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            gpu.state.line_width_set(1.5)  # Medium line width
+            line_shader.bind()
+            line_shader.uniform_float("color", perspective_color)
+            
+            # Create perspective quad outline (connecting corner handles)
+            perspective_vertices = handle_positions + [handle_positions[0]]  # Close the quad
+            
+            batch = batch_for_shader(line_shader, 'LINE_STRIP', {"pos": perspective_vertices})
+            batch.draw(line_shader)
+            
+            # Optional: Draw diagonal lines to show the distortion more clearly
+            diagonal_color = (0.0, 1.0, 1.0, 0.3)  # More transparent cyan
+            line_shader.uniform_float("color", diagonal_color)
+            
+            # Diagonal lines: 0->2 and 1->3
+            diagonal_vertices = [
+                handle_positions[0], handle_positions[2],  # Bottom-left to top-right
+                handle_positions[1], handle_positions[3]   # Top-left to bottom-right
+            ]
+            
+            diagonal_batch = batch_for_shader(line_shader, 'LINES', {"pos": diagonal_vertices})
+            diagonal_batch.draw(line_shader)
+            
+            gpu.state.line_width_set(1.0)  # Reset line width
+            
+        except Exception as e:
+            pass
+    
+    def _draw_perspective_grid_overlay(self, context):
+        """Draw a subtle grid showing the perspective transformation effect"""
+        if len(self.gizmos) < 4:
+            return
+        
+        # Only draw grid during active dragging for performance
+        is_dragging = any(hasattr(gz, '_is_dragging') and getattr(gz, '_is_dragging', False) for gz in self.gizmos[:4])
+        if not is_dragging:
+            return
+            
+        try:
+            # Get current strip and homography matrix
+            scene = context.scene
+            if not scene.sequence_editor:
+                return
+                
+            strip = scene.sequence_editor.active_strip
+            if not strip:
+                return
+                
+            # Get stored homography matrix
+            from ..operators.perspective_core import get_perspective_matrix_from_strip
+            homography = get_perspective_matrix_from_strip(strip)
+            if not homography:
+                return
+            
+            # Draw a 4x4 grid showing the perspective effect
+            grid_color = (0.0, 1.0, 1.0, 0.2)  # Very transparent cyan
+            
+            line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            gpu.state.line_width_set(1.0)
+            line_shader.bind()
+            line_shader.uniform_float("color", grid_color)
+            
+            # Create grid lines in original space, then transform them
+            grid_lines = []
+            divisions = 4
+            
+            # Get VSE boundary corners for grid base
+            if not hasattr(self, '_boundary_corners') or len(self._boundary_corners) != 4:
+                return
+                
+            boundary = self._boundary_corners
+            
+            # Vertical lines
+            for i in range(divisions + 1):
+                t = i / divisions
+                # Interpolate along top and bottom edges
+                top_point = (
+                    boundary[1].x + t * (boundary[2].x - boundary[1].x),
+                    boundary[1].y + t * (boundary[2].y - boundary[1].y)
+                )
+                bottom_point = (
+                    boundary[0].x + t * (boundary[3].x - boundary[0].x),
+                    boundary[0].y + t * (boundary[3].y - boundary[0].y)
+                )
+                grid_lines.extend([top_point, bottom_point])
+            
+            # Horizontal lines
+            for i in range(divisions + 1):
+                t = i / divisions
+                # Interpolate along left and right edges
+                left_point = (
+                    boundary[0].x + t * (boundary[1].x - boundary[0].x),
+                    boundary[0].y + t * (boundary[1].y - boundary[0].y)
+                )
+                right_point = (
+                    boundary[3].x + t * (boundary[2].x - boundary[3].x),
+                    boundary[3].y + t * (boundary[2].y - boundary[3].y)
+                )
+                grid_lines.extend([left_point, right_point])
+            
+            # Draw the grid
+            batch = batch_for_shader(line_shader, 'LINES', {"pos": grid_lines})
+            batch.draw(line_shader)
             
         except Exception as e:
             pass

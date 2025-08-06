@@ -265,9 +265,11 @@ def unregister():
     
     # Clean up draw handlers
     try:
-        from .operators.perspective_core import get_draw_handle
+        from .operators.perspective_core import get_draw_handle, clear_all_perspective_gpu_rendering
         if get_draw_handle() is not None:
             bpy.types.SpaceSequenceEditor.draw_handler_remove(get_draw_handle(), 'PREVIEW')
+        # Clean up GPU perspective rendering
+        clear_all_perspective_gpu_rendering()
     except:
         pass
     

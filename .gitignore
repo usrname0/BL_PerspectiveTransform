@@ -31,6 +31,8 @@ MANIFEST
 zips/
 .claude/
 CLAUDE.md
+BLENDER.md
+PROJECT.md
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

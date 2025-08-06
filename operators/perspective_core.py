@@ -203,24 +203,27 @@ def calculate_perspective_matrix(src_corners, dst_corners):
     }
 
 
-def apply_perspective_to_strip(strip, perspective_matrix):
+def apply_perspective_to_strip(strip, homography_matrix):
     """
-    Apply perspective transformation to strip
-    This is a placeholder - will implement proper perspective application
+    Apply perspective transformation using GPU shader rendering.
+    
+    Creates a draw handler that renders a perspective-distorted texture quad
+    on top of the original strip, giving the visual effect of perspective distortion.
+    
+    Args:
+        strip: Blender sequence strip
+        homography_matrix: 3x3 Matrix homography transformation
     """
-    # TODO: Implement proper perspective application
-    # For now, just apply basic transforms
-    if hasattr(strip, 'transform'):
-        if 'scale_x' in perspective_matrix:
-            strip.transform.scale_x = perspective_matrix['scale_x']
-        if 'scale_y' in perspective_matrix:
-            strip.transform.scale_y = perspective_matrix['scale_y']
-        if 'offset_x' in perspective_matrix:
-            strip.transform.offset_x = perspective_matrix['offset_x']
-        if 'offset_y' in perspective_matrix:
-            strip.transform.offset_y = perspective_matrix['offset_y']
-        if 'rotation' in perspective_matrix:
-            strip.transform.rotation = perspective_matrix['rotation']
+    if not strip or not homography_matrix:
+        return
+    
+    # Store the matrix for the GPU shader system
+    store_perspective_matrix_in_strip(strip, homography_matrix)
+    
+    # Enable GPU-based perspective rendering
+    _enable_perspective_rendering(strip)
+    
+    print(f"Debug: Perspective GPU rendering enabled for strip")
 
 
 # State management functions
@@ -506,3 +509,349 @@ def get_effective_corners_for_perspective(strip, scene):
     # Otherwise, use current strip geometry as the baseline
     corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
     return corners
+
+
+def apply_stored_perspective_to_strip(strip):
+    """
+    Apply any stored perspective transformation to the strip.
+    This is called when initializing or refreshing perspective transforms.
+    
+    Args:
+        strip: Blender sequence strip
+    """
+    if not strip or not has_perspective_transform(strip):
+        return
+    
+    # Get stored homography matrix
+    homography = get_perspective_matrix_from_strip(strip)
+    if homography:
+        # Apply the stored perspective transformation
+        apply_perspective_to_strip(strip, homography)
+        print("Debug: Applied stored perspective transformation to strip")
+
+
+def export_perspective_data_for_compositor(strip, scene):
+    """
+    Export perspective transformation data in a format suitable for Blender's Compositor Corner Pin node.
+    
+    Args:
+        strip: Blender sequence strip with perspective data
+        scene: Blender scene
+        
+    Returns:
+        dict: Corner pin data with original and transformed coordinates
+    """
+    if not strip or not has_perspective_transform(strip):
+        return None
+    
+    try:
+        # Get original corners (source)
+        original_corners = get_original_corners_from_strip(strip)
+        if not original_corners:
+            # Fall back to current strip geometry
+            corners, _, _ = get_strip_geometry_with_flip_support(strip, scene)
+            original_corners = corners
+        
+        # Get perspective corner offsets
+        offsets = get_perspective_offsets_from_strip(strip)
+        if not offsets:
+            return None
+        
+        # Calculate transformed corners (destination)
+        current_corners, _, _ = get_strip_geometry_with_flip_support(strip, scene)
+        transformed_corners = []
+        
+        for i, (current_corner, offset) in enumerate(zip(current_corners, offsets)):
+            transformed_corner = Vector([
+                current_corner.x + offset.x,
+                current_corner.y + offset.y
+            ])
+            transformed_corners.append(transformed_corner)
+        
+        # Convert to normalized coordinates (0.0 to 1.0)
+        res_x = scene.render.resolution_x
+        res_y = scene.render.resolution_y
+        
+        def normalize_coord(coord):
+            return (coord.x / res_x, coord.y / res_y)
+        
+        return {
+            'strip_name': strip.name,
+            'original_corners': [normalize_coord(c) for c in original_corners],
+            'transformed_corners': [normalize_coord(c) for c in transformed_corners],
+            'homography_matrix': get_perspective_matrix_from_strip(strip),
+            'resolution': (res_x, res_y)
+        }
+        
+    except Exception as e:
+        print(f"Warning: Could not export perspective data: {e}")
+        return None
+
+
+def get_perspective_transform_info(strip):
+    """
+    Get human-readable information about the perspective transformation.
+    
+    Args:
+        strip: Blender sequence strip
+        
+    Returns:
+        dict: Information about the perspective transform
+    """
+    if not strip or not has_perspective_transform(strip):
+        return {"has_transform": False, "message": "No perspective transformation applied"}
+    
+    try:
+        homography = get_perspective_matrix_from_strip(strip)
+        offsets = get_perspective_offsets_from_strip(strip)
+        
+        info = {
+            "has_transform": True,
+            "strip_name": strip.name,
+            "homography_matrix": str(homography) if homography else "None",
+            "corner_offsets": len(offsets) if offsets else 0,
+            "message": "Perspective transformation data is stored but not visually applied (VSE limitation)"
+        }
+        
+        return info
+        
+    except Exception as e:
+        return {"has_transform": False, "error": str(e)}
+
+
+# GPU-based Perspective Rendering System
+_gpu_draw_handler = None
+_gpu_enabled_strips = set()
+
+
+def _enable_perspective_rendering(strip):
+    """Enable GPU-based perspective rendering for a strip"""
+    global _gpu_draw_handler, _gpu_enabled_strips
+    
+    if not strip:
+        return
+    
+    # Add strip to enabled set
+    _gpu_enabled_strips.add(strip.name)
+    
+    # Install draw handler if not already installed
+    if _gpu_draw_handler is None:
+        _gpu_draw_handler = bpy.types.SpaceSequenceEditor.draw_handler_add(
+            _draw_perspective_gpu_overlay, (), 'PREVIEW', 'POST_PIXEL'
+        )
+        print("Debug: GPU perspective draw handler installed")
+
+
+def _disable_perspective_rendering(strip):
+    """Disable GPU-based perspective rendering for a strip"""
+    global _gpu_draw_handler, _gpu_enabled_strips
+    
+    if not strip:
+        return
+    
+    # Remove strip from enabled set
+    _gpu_enabled_strips.discard(strip.name)
+    
+    # Remove draw handler if no strips are using it
+    if not _gpu_enabled_strips and _gpu_draw_handler is not None:
+        try:
+            bpy.types.SpaceSequenceEditor.draw_handler_remove(_gpu_draw_handler, 'PREVIEW')
+            _gpu_draw_handler = None
+            print("Debug: GPU perspective draw handler removed")
+        except:
+            pass
+
+
+def _draw_perspective_gpu_overlay():
+    """GPU draw handler that renders perspective-distorted texture quads"""
+    try:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        
+        context = bpy.context
+        if not context.scene or not context.scene.sequence_editor:
+            return
+            
+        active_strip = context.scene.sequence_editor.active_strip
+        if not active_strip or active_strip.name not in _gpu_enabled_strips:
+            return
+        
+        # Get handle positions directly from the gizmo system 
+        # This ensures the blue overlay matches the cyan preview lines exactly
+        handle_positions = _get_current_handle_positions(context)
+        if not handle_positions or len(handle_positions) != 4:
+            return
+            
+        print(f"Debug: GPU overlay using handle positions: {handle_positions}")
+        
+        # Render the overlay quad using the exact same coordinates as preview lines
+        _render_perspective_overlay_quad(handle_positions)
+        
+    except Exception as e:
+        print(f"Debug: GPU draw handler error: {e}")
+
+
+def _get_current_handle_positions(context):
+    """Get current handle positions using the same method as the gizmo system"""
+    try:
+        scene = context.scene
+        if not scene.sequence_editor:
+            print("Debug: No sequence editor")
+            return None
+            
+        active_strip = scene.sequence_editor.active_strip
+        if not active_strip:
+            print("Debug: No active strip")
+            return None
+        
+        # Use the exact same calculation as the gizmo system's _get_stored_perspective_positions
+        region = context.region
+        if not region:
+            print("Debug: No region")
+            return None
+            
+        view2d = region.view2d
+        res_x = scene.render.resolution_x
+        res_y = scene.render.resolution_y
+        
+        # Get stored perspective offsets (same as gizmo system)
+        from .perspective_core import get_perspective_offsets_from_strip
+        offsets = get_perspective_offsets_from_strip(active_strip)
+        
+        if not offsets or len(offsets) != 4:
+            print("Debug: No stored perspective offsets found")
+            return None
+        
+        # Get current rotation and geometry (same as gizmo system)  
+        current_rotation = 0
+        if hasattr(active_strip, 'transform') and hasattr(active_strip.transform, 'rotation'):
+            current_rotation = active_strip.transform.rotation
+            
+        # Get unrotated VSE corners (same as gizmo system)
+        corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(active_strip, scene)
+        
+        # Un-rotate if needed to get unrotated corners (same as gizmo system)
+        if current_rotation != 0:
+            pivot = Vector((pivot_x, pivot_y))
+            unrotated_corners = []
+            
+            for corner in corners:
+                angle = -current_rotation
+                if flip_x != flip_y:
+                    angle = -angle
+                    
+                cos_a = math.cos(angle)
+                sin_a = math.sin(angle)
+                x = corner.x - pivot.x
+                y = corner.y - pivot.y
+                new_x = x * cos_a - y * sin_a
+                new_y = x * sin_a + y * cos_a
+                unrotated_corner = Vector([new_x + pivot.x, new_y + pivot.y])
+                unrotated_corners.append(unrotated_corner)
+        else:
+            unrotated_corners = corners
+        
+        # Calculate VSE dimensions (same as gizmo system)
+        vse_width = unrotated_corners[2].x - unrotated_corners[0].x
+        vse_height = unrotated_corners[2].y - unrotated_corners[0].y
+        
+        # Apply proportional offsets (same as gizmo system)
+        unrotated_perspective_corners = []
+        for i, (vse_corner, proportional_offset) in enumerate(zip(unrotated_corners, offsets)):
+            absolute_offset_x = proportional_offset.x * vse_width
+            absolute_offset_y = proportional_offset.y * vse_height
+            unrotated_perspective_corner = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
+            unrotated_perspective_corners.append(unrotated_perspective_corner)
+        
+        # Rotate back to current rotation (same as gizmo system)
+        if current_rotation != 0:
+            pivot = Vector((pivot_x, pivot_y))
+            perspective_corners = []
+            
+            for unrotated_corner in unrotated_perspective_corners:
+                angle = current_rotation
+                if flip_x != flip_y:
+                    angle = -angle
+                    
+                cos_a = math.cos(angle)
+                sin_a = math.sin(angle)
+                x = unrotated_corner.x - pivot.x
+                y = unrotated_corner.y - pivot.y
+                new_x = x * cos_a - y * sin_a
+                new_y = x * sin_a + y * cos_a
+                rotated_corner = Vector([new_x + pivot.x, new_y + pivot.y])
+                perspective_corners.append(rotated_corner)
+        else:
+            perspective_corners = unrotated_perspective_corners
+        
+        # Convert to screen coordinates (same as gizmo system)
+        screen_positions = []
+        for corner in perspective_corners:
+            view_x = corner.x - res_x / 2
+            view_y = corner.y - res_y / 2
+            screen_co = view2d.view_to_region(view_x, view_y, clip=False)
+            screen_positions.append((screen_co[0], screen_co[1]))
+        
+        print(f"Debug: GPU calculated screen positions: {screen_positions}")
+        return screen_positions
+        
+    except Exception as e:
+        print(f"Debug: Error getting handle positions: {e}")
+        return None
+
+
+def _render_perspective_overlay_quad(screen_corners):
+    """Render a perspective-distorted overlay quad"""
+    try:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        
+        print(f"Debug: Rendering overlay quad with corners: {screen_corners}")
+        
+        # Create a semi-transparent overlay showing the perspective effect
+        overlay_color = (0.0, 1.0, 1.0, 0.2)  # Cyan with transparency
+        
+        # Use built-in shader for colored geometry
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        
+        # Create triangulated quad (two triangles)
+        # Ensure proper winding order for quad: 0->1->2, 0->2->3
+        vertices = [
+            screen_corners[0],  # Corner 0
+            screen_corners[1],  # Corner 1
+            screen_corners[2],  # Corner 2
+            screen_corners[0],  # Corner 0 (second triangle)
+            screen_corners[2],  # Corner 2
+            screen_corners[3]   # Corner 3
+        ]
+        
+        print(f"Debug: Triangle vertices: {vertices}")
+        
+        batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
+        
+        # Enable blending for transparency
+        gpu.state.blend_set('ALPHA')
+        
+        shader.bind()
+        shader.uniform_float("color", overlay_color)
+        batch.draw(shader)
+        
+        # Restore blending
+        gpu.state.blend_set('NONE')
+        
+    except Exception as e:
+        print(f"Debug: Overlay quad render error: {e}")
+
+
+def clear_all_perspective_gpu_rendering():
+    """Clear all GPU perspective rendering (for cleanup)"""
+    global _gpu_draw_handler, _gpu_enabled_strips
+    
+    _gpu_enabled_strips.clear()
+    
+    if _gpu_draw_handler is not None:
+        try:
+            bpy.types.SpaceSequenceEditor.draw_handler_remove(_gpu_draw_handler, 'PREVIEW')
+        except:
+            pass
+        _gpu_draw_handler = None
