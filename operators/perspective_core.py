@@ -666,20 +666,6 @@ def _draw_perspective_gpu_overlay():
     """GPU draw handler that renders perspective-distorted texture quads - TEMPORARILY DISABLED"""
     # Temporarily disable GPU overlay until handles are positioned correctly
     return
-        
-        # Get handle positions directly from the gizmo system 
-        # This ensures the blue overlay matches the cyan preview lines exactly
-        handle_positions = _get_current_handle_positions(context)
-        if not handle_positions or len(handle_positions) != 4:
-            return
-            
-        print(f"Debug: GPU overlay using handle positions: {handle_positions}")
-        
-        # Render the overlay quad using the exact same coordinates as preview lines
-        _render_perspective_overlay_quad(handle_positions)
-        
-    except Exception as e:
-        print(f"Debug: GPU draw handler error: {e}")
 
 
 def _get_current_handle_positions(context):
