@@ -663,18 +663,9 @@ def _disable_perspective_rendering(strip):
 
 
 def _draw_perspective_gpu_overlay():
-    """GPU draw handler that renders perspective-distorted texture quads"""
-    try:
-        import gpu
-        from gpu_extras.batch import batch_for_shader
-        
-        context = bpy.context
-        if not context.scene or not context.scene.sequence_editor:
-            return
-            
-        active_strip = context.scene.sequence_editor.active_strip
-        if not active_strip or active_strip.name not in _gpu_enabled_strips:
-            return
+    """GPU draw handler that renders perspective-distorted texture quads - TEMPORARILY DISABLED"""
+    # Temporarily disable GPU overlay until handles are positioned correctly
+    return
         
         # Get handle positions directly from the gizmo system 
         # This ensures the blue overlay matches the cyan preview lines exactly

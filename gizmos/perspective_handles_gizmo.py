@@ -883,24 +883,9 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
                     print(f"Warning: Could not get stored perspective positions: {e}")
                     stored_positions = None
                 
-                # Check if we should use stored positions or fall back to VSE corners
-                use_stored_positions = stored_positions and i < len(stored_positions)
-                
-                # For now, when strip is flipped, always use current VSE corners instead of stored positions
-                # This ensures handles visually follow the strip when flipped
-                if flip_x or flip_y:
-                    use_stored_positions = False
-                    print(f"Debug: Strip is flipped (flip_x={flip_x}, flip_y={flip_y}) - using VSE corners instead of stored positions")
-                
-                if use_stored_positions:
-                    # Use stored perspective position (SCREEN COORDINATES)
-                    handle_x, handle_y = stored_positions[i]
-                    print(f"Debug: Handle {i} using STORED position (screen): ({handle_x:.1f},{handle_y:.1f}) vs VSE corner: ({screen_corner.x:.1f},{screen_corner.y:.1f})")
-                else:
-                    # Use current VSE corner positions (follows flip changes)
-                    handle_x = screen_corner.x
-                    handle_y = screen_corner.y
-                    print(f"Debug: Handle {i} using VSE corner (screen): ({handle_x:.1f},{handle_y:.1f})")
+                # New approach: Use offset-based positioning that properly handles flips
+                handle_x, handle_y = self._get_flip_aware_handle_position(i, screen_corners, strip, scene, flip_x, flip_y)
+                print(f"Debug: Handle {i} flip-aware position: ({handle_x:.1f},{handle_y:.1f})")
                 
                 # Set position using screen coordinates (SCREEN COORDINATES -> MATRIX)
                 gz.matrix_basis = Matrix.Translation((handle_x, handle_y, 0))
@@ -1240,6 +1225,93 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             
         except Exception as e:
             pass
+
+    def _get_flip_aware_handle_position(self, handle_index, screen_corners, strip, scene, flip_x, flip_y):
+        """
+        Get handle position that properly follows flips by using offset-based positioning.
+        
+        Logic:
+        1. Get stored offset for this handle (relative to its original corner)
+        2. Determine which corner this handle should follow when flipped
+        3. Apply the offset (flipped if necessary) to the target corner
+        
+        Args:
+            handle_index: Which handle (0-3)
+            screen_corners: Current VSE corners in screen coordinates 
+            strip: Blender strip
+            scene: Blender scene
+            flip_x, flip_y: Current flip states
+            
+        Returns:
+            (x, y) screen coordinates for handle position
+        """
+        
+        # Get stored perspective offsets
+        from ..operators.perspective_core import get_perspective_offsets_from_strip
+        offsets = get_perspective_offsets_from_strip(strip)
+        
+        if not offsets or len(offsets) != 4 or handle_index >= 4:
+            # No stored offsets - use VSE corner as fallback
+            if handle_index < len(screen_corners):
+                corner = screen_corners[handle_index]
+                print(f"Debug: Handle {handle_index} using VSE corner fallback: ({corner.x:.1f},{corner.y:.1f})")
+                return corner.x, corner.y
+            return 0, 0
+        
+        # Step 1: Determine which corner this handle should follow when flipped
+        # Corner mapping: 0=bottom-left, 1=top-left, 2=top-right, 3=bottom-right
+        target_corner_index = handle_index  # Default: handle follows its own corner
+        
+        if flip_x and not flip_y:
+            # Horizontal flip: left↔right
+            corner_remap = [3, 2, 1, 0]  # 0→3, 1→2, 2→1, 3→0
+            target_corner_index = corner_remap[handle_index]
+        elif not flip_x and flip_y:
+            # Vertical flip: top↔bottom  
+            corner_remap = [1, 0, 3, 2]  # 0→1, 1→0, 2→3, 3→2
+            target_corner_index = corner_remap[handle_index]
+        elif flip_x and flip_y:
+            # Both flips: diagonal opposite
+            corner_remap = [2, 3, 0, 1]  # 0→2, 1→3, 2→0, 3→1
+            target_corner_index = corner_remap[handle_index]
+        
+        # Step 2: Get the offset for this handle (stored as proportional offset)
+        offset = offsets[handle_index]
+        
+        # Step 3: Flip the offset values if necessary
+        offset_x = offset.x
+        offset_y = offset.y
+        
+        if flip_x:
+            offset_x = -offset_x  # Flip X offset
+        if flip_y:
+            offset_y = -offset_y  # Flip Y offset
+        
+        # Step 4: Get current VSE dimensions for converting proportional to absolute offset
+        corners, (pivot_x, pivot_y), _ = get_strip_geometry_with_flip_support(strip, scene)
+        vse_width = abs(corners[2].x - corners[0].x)  # right - left
+        vse_height = abs(corners[1].y - corners[0].y)  # top - bottom
+        
+        # Step 5: Apply flipped offset to target corner
+        if target_corner_index < len(screen_corners):
+            target_corner = screen_corners[target_corner_index]
+            
+            # Convert proportional offset to absolute screen offset  
+            absolute_offset_x = offset_x * vse_width
+            absolute_offset_y = offset_y * vse_height
+            
+            # Convert to screen space offset (approximate - this may need refinement)
+            screen_offset_x = absolute_offset_x * 0.5  # Scale factor - may need adjustment
+            screen_offset_y = absolute_offset_y * 0.5  # Scale factor - may need adjustment
+            
+            final_x = target_corner.x + screen_offset_x
+            final_y = target_corner.y + screen_offset_y
+            
+            print(f"Debug: Handle {handle_index} -> Corner {target_corner_index}, offset ({offset_x:.3f},{offset_y:.3f}) -> screen ({final_x:.1f},{final_y:.1f})")
+            return final_x, final_y
+        
+        # Fallback 
+        return screen_corners[handle_index].x, screen_corners[handle_index].y if handle_index < len(screen_corners) else (0, 0)
 
 
 # Registration functions
