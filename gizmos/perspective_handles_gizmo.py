@@ -883,12 +883,21 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
                     print(f"Warning: Could not get stored perspective positions: {e}")
                     stored_positions = None
                 
-                if stored_positions and i < len(stored_positions):
+                # Check if we should use stored positions or fall back to VSE corners
+                use_stored_positions = stored_positions and i < len(stored_positions)
+                
+                # For now, when strip is flipped, always use current VSE corners instead of stored positions
+                # This ensures handles visually follow the strip when flipped
+                if flip_x or flip_y:
+                    use_stored_positions = False
+                    print(f"Debug: Strip is flipped (flip_x={flip_x}, flip_y={flip_y}) - using VSE corners instead of stored positions")
+                
+                if use_stored_positions:
                     # Use stored perspective position (SCREEN COORDINATES)
                     handle_x, handle_y = stored_positions[i]
                     print(f"Debug: Handle {i} using STORED position (screen): ({handle_x:.1f},{handle_y:.1f}) vs VSE corner: ({screen_corner.x:.1f},{screen_corner.y:.1f})")
                 else:
-                    # Default to exact VSE corner positions
+                    # Use current VSE corner positions (follows flip changes)
                     handle_x = screen_corner.x
                     handle_y = screen_corner.y
                     print(f"Debug: Handle {i} using VSE corner (screen): ({handle_x:.1f},{handle_y:.1f})")
