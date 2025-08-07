@@ -433,11 +433,20 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     
     def _handle_confirm(self, context, event):
         """Handle drag confirmation"""
+        # Clear perspective modal state to restore gizmo visibility
+        from ..operators.perspective_core import set_perspective_active
+        set_perspective_active(False)
+        
         # Transformation is already applied during drag, just finish
+        print("Debug: Perspective drag confirmed, gizmos should remain visible")
         return {'FINISHED'}
     
     def _handle_cancel(self, context, event):
         """Handle drag cancellation - restore original state"""
+        # Clear perspective modal state to restore gizmo visibility
+        from ..operators.perspective_core import set_perspective_active
+        set_perspective_active(False)
+        
         scene = context.scene
         if scene.sequence_editor:
             strip = scene.sequence_editor.active_strip
@@ -454,6 +463,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 strip.transform.offset_x = 0.0
                 strip.transform.offset_y = 0.0
         
+        print("Debug: Perspective drag cancelled, gizmos should be restored")
         return {'CANCELLED'}
     
     def invoke(self, context, event):
@@ -694,6 +704,36 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     
     def exit(self, context, cancel):
         """Exit perspective transform with cursor warping - EasyCrop implementation"""
+        # CRITICAL: Clear perspective modal state to restore gizmo visibility
+        from ..operators.perspective_core import set_perspective_active
+        set_perspective_active(False)
+        
+        if cancel:
+            print("Debug: Perspective drag cancelled via gizmo exit, gizmos should be restored")
+            # Handle cancellation - clear transforms
+            scene = context.scene
+            if scene.sequence_editor:
+                strip = scene.sequence_editor.active_strip
+                if strip and hasattr(strip, 'transform'):
+                    from ..operators.perspective_core import clear_perspective_matrix_from_strip, _disable_perspective_rendering
+                    clear_perspective_matrix_from_strip(strip)
+                    _disable_perspective_rendering(strip)
+        else:
+            print("Debug: Perspective drag completed via gizmo exit, gizmos should remain visible")
+        
+        # Force region redraw to update gizmo visibility immediately
+        try:
+            for area in context.screen.areas:
+                if area.type == 'SEQUENCE_EDITOR':
+                    for region in area.regions:
+                        if region.type == 'PREVIEW':
+                            region.tag_redraw()
+                            print("Debug: Forced preview region redraw to restore gizmo visibility")
+                            break
+                    break
+        except Exception as e:
+            print(f"Debug: Could not force redraw: {e}")
+        
         if self.handle_type != "center":
             # Deferred cursor warp with timer (EasyCrop approach)
             if not cancel:
@@ -818,6 +858,10 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             for gz in self.gizmos:
                 gz.hide = True
             return
+        else:
+            # Explicitly ensure gizmos are visible when not in modal mode
+            for gz in self.gizmos:
+                gz.hide = False
         
         
         # Get current strip geometry
@@ -825,10 +869,13 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
             
             # Debug flip states and corner positions
+            print(f"Debug: GIZMO REFRESH - flip_x={flip_x}, flip_y={flip_y}")
+            for i, corner in enumerate(corners):
+                print(f"Debug: Corner {i}: ({corner.x:.1f}, {corner.y:.1f})")
+            
             if flip_x or flip_y:
-                print(f"Debug: FLIP STATE - flip_x={flip_x}, flip_y={flip_y}")
-                for i, corner in enumerate(corners):
-                    print(f"Debug: Corner {i}: ({corner.x:.1f}, {corner.y:.1f})")
+                print(f"Debug: FLIP DETECTED - flip_x={flip_x}, flip_y={flip_y}")
+                print(f"Debug: XOR flip: {flip_x != flip_y}")
         except:
             for gz in self.gizmos:
                 gz.hide = True
@@ -848,9 +895,13 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
             angle = strip.transform.rotation
         
+        original_angle = angle
         # Handle flipped rotation
         if flip_x != flip_y:  # XOR - if only one axis is flipped
             angle = -angle
+            print(f"Debug: ROTATION FLIP COMPENSATION - Original: {original_angle:.3f} -> Flipped: {angle:.3f}")
+        else:
+            print(f"Debug: NO ROTATION FLIP - Angle: {angle:.3f}")
         
         # Convert corners to screen coordinates for proper positioning
         screen_corners = []
@@ -915,11 +966,12 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         # Draw red boundary outline (VSE rectangle bounds)
         self._draw_boundary_outline()
         
+        # TEMPORARILY DISABLED - Testing if these interfere with flip logic
         # Draw perspective distortion preview lines
-        self._draw_perspective_preview_lines(context)
+        # self._draw_perspective_preview_lines(context)
         
         # Draw perspective grid overlay (if enabled)
-        self._draw_perspective_grid_overlay(context)
+        # self._draw_perspective_grid_overlay(context)
     
     def draw_prepare(self, context):
         """Called before drawing - ensures frequent updates for zoom responsiveness"""
@@ -976,10 +1028,33 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             print(f"Debug: Unrotated VSE corners: {[f'({c.x:.1f},{c.y:.1f})' for c in unrotated_corners]}")
             print(f"Debug: Stored proportional offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
             
-            # Simple approach: Use offsets as stored, no remapping or direction adjustment
-            remapped_offsets = offsets
+            # Apply flip compensation by remapping the offsets to different corners
+            # The issue is that stored offsets were created for non-flipped coordinates
+            # When flipped, we need to apply the same offsets but to different corner indices
+            remapped_offsets = [Vector([0.0, 0.0]) for _ in range(4)]  # Initialize array
             
-            print(f"Debug: Simple approach - Using stored offsets directly: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
+            for i, offset in enumerate(offsets):
+                target_index = i  # Default: no remapping
+                
+                # Remap corner indices based on flip state
+                # Corner layout: 0=bottom-left, 1=top-left, 2=top-right, 3=bottom-right
+                if flip_x and not flip_y:
+                    # Horizontal flip only: swap left↔right (0↔3, 1↔2)
+                    remap_table = [3, 2, 1, 0]
+                    target_index = remap_table[i]
+                elif flip_y and not flip_x:
+                    # Vertical flip only: swap top↔bottom (0↔1, 2↔3)  
+                    remap_table = [1, 0, 3, 2]
+                    target_index = remap_table[i]
+                elif flip_x and flip_y:
+                    # Both flips: diagonal swap (0↔2, 1↔3)
+                    remap_table = [2, 3, 0, 1]
+                    target_index = remap_table[i]
+                
+                remapped_offsets[target_index] = offset
+                print(f"Debug: Handle {i} -> {target_index} remapping - Offset: ({offset.x:.3f},{offset.y:.3f})")
+            
+            print(f"Debug: Remapped offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in remapped_offsets]}")
             
             # Apply remapped proportional offsets to current VSE dimensions
             unrotated_perspective_corners = []
