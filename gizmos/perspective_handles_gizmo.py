@@ -811,6 +811,9 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         strip = scene.sequence_editor.active_strip
         if not strip:
             return
+            
+        # Debug: Print when refresh is called
+        print(f"DEBUG: Gizmo refresh called for strip {strip.name}")
         
         # Don't show during modal mode
         perspective_state = get_perspective_state()
@@ -824,11 +827,10 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
         try:
             corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
             
-            # Debug flip states and corner positions
-            if flip_x or flip_y:
-                print(f"Debug: FLIP STATE - flip_x={flip_x}, flip_y={flip_y}")
-                for i, corner in enumerate(corners):
-                    print(f"Debug: Corner {i}: ({corner.x:.1f}, {corner.y:.1f})")
+            # Debug flip states and corner positions - ALWAYS print so we can see changes
+            print(f"DEBUG: Current flip state - flip_x={flip_x}, flip_y={flip_y}")
+            for i, corner in enumerate(corners):
+                print(f"DEBUG: Corner {i}: ({corner.x:.1f}, {corner.y:.1f})")
         except:
             for gz in self.gizmos:
                 gz.hide = True
