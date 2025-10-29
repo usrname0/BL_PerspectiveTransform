@@ -634,30 +634,26 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                     print(f"Debug: Handle {i} (DRAGGED) - Corner: ({current_corners[i].x:.1f},{current_corners[i].y:.1f}), Handle: ({new_position.x:.1f},{new_position.y:.1f}), Offset: ({offset_vector.x:.1f},{offset_vector.y:.1f})")
                 else:
                     # For other handles, reconstruct their offset from existing stored offsets
-                    # Load the offset, apply to canonical corner, flip/rotate to get current position
-                    vse_corner_canonical = canonical_vse_corners[i]
+                    # Convert proportional offset to absolute canonical offset vector
                     proportional_offset = existing_offsets[i]
 
                     vse_width = canonical_vse_corners[2].x - canonical_vse_corners[0].x
                     vse_height = canonical_vse_corners[1].y - canonical_vse_corners[0].y
-                    absolute_offset_x = proportional_offset.x * vse_width
-                    absolute_offset_y = proportional_offset.y * vse_height
+                    canonical_offset_x = proportional_offset.x * vse_width
+                    canonical_offset_y = proportional_offset.y * vse_height
 
-                    canonical_handle_pos = Vector([vse_corner_canonical.x + absolute_offset_x, vse_corner_canonical.y + absolute_offset_y])
-
-                    # Apply flip and rotation to get current handle position
-                    res_x = scene.render.resolution_x
-                    res_y = scene.render.resolution_y
-                    flipped_handle_pos = self.group._apply_flip_to_position(canonical_handle_pos, res_x, res_y, flip_x, flip_y)
-
+                    # Rotate the canonical offset vector to match current rotation
                     angle = current_rotation
                     if flip_x != flip_y:
                         angle = -angle
-                    rotated_handle_pos = self.group._rotate_point(flipped_handle_pos, angle, Vector((pivot_x, pivot_y)))
 
-                    # Calculate offset in current space
-                    offset_vector = rotated_handle_pos - current_corners[i]
-                    print(f"Debug: Handle {i} (PRESERVED) - Offset: ({offset_vector.x:.1f},{offset_vector.y:.1f})")
+                    cos_a = math.cos(angle)
+                    sin_a = math.sin(angle)
+                    rotated_offset_x = canonical_offset_x * cos_a - canonical_offset_y * sin_a
+                    rotated_offset_y = canonical_offset_x * sin_a + canonical_offset_y * cos_a
+
+                    offset_vector = Vector([rotated_offset_x, rotated_offset_y])
+                    print(f"Debug: Handle {i} (PRESERVED) - Canonical offset: ({canonical_offset_x:.1f},{canonical_offset_y:.1f}) -> Rotated offset: ({rotated_offset_x:.1f},{rotated_offset_y:.1f})")
 
                 current_offsets_in_transformed_space.append(offset_vector)
 
