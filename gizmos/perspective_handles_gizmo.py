@@ -516,8 +516,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 angle = -original_rotation  # Negative to un-rotate
                 if flip_x != flip_y:  # Handle flip compensation
                     angle = -angle
-                    
-                unrotated_corner = self._rotate_point(perspective_corner, angle, pivot)
+
+                unrotated_corner = self.group._rotate_point(perspective_corner, angle, pivot)
                 unrotated_perspective_corners.append(unrotated_corner)
             
             print(f"Debug: Storing ROTATION-INVARIANT offsets")
@@ -558,9 +558,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             current_rotation = 0
             if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
                 current_rotation = strip.transform.rotation
-                
-            # Get unrotated VSE corners for rotation-invariant storage
-            unrotated_vse_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_unrotated_strip_geometry(strip, scene)
+
+            # Get CANONICAL (unflipped+unrotated) VSE corners for flip/rotation-independent storage
+            canonical_vse_corners, (canonical_pivot_x, canonical_pivot_y), (scale_x, scale_y, flip_x, flip_y) = self.group._get_canonical_strip_geometry(strip, scene)
+            canonical_pivot = (canonical_pivot_x, canonical_pivot_y)
             
             # Simple approach: Store handle at its actual index, no remapping
             storage_handle_id = handle_id
@@ -579,41 +580,52 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             else:
                 print(f"Debug: Found existing proportional offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in existing_offsets]}")
             
-            # Calculate current unrotated perspective positions for all handles
-            # Use storage indices for consistency with visual remapping
-            current_unrotated_perspective_corners = []
+            # Calculate current CANONICAL perspective positions for all handles
+            # These will be in unflipped+unrotated space for true transform independence
+            current_canonical_perspective_corners = []
             for i in range(4):
                 if i == storage_handle_id:
-                    # For the dragged handle (at storage position), un-rotate the new position
-                    pivot = Vector((pivot_x, pivot_y))
+                    # For the dragged handle, convert from rotated+flipped space to canonical space
+                    # Step 1: Un-rotate
+                    offset_x = strip.transform.offset_x if hasattr(strip, 'transform') else 0
+                    offset_y = strip.transform.offset_y if hasattr(strip, 'transform') else 0
+                    pivot_rotated = Vector((scene.render.resolution_x / 2 + offset_x,
+                                          scene.render.resolution_y / 2 + offset_y))
                     angle = -current_rotation  # Un-rotate
                     if flip_x != flip_y:  # Handle flip compensation
                         angle = -angle
-                    unrotated_new_pos = self._rotate_point(new_position, angle, pivot)
-                    current_unrotated_perspective_corners.append(unrotated_new_pos)
-                    print(f"Debug: Handle {i} (DRAGGED, visual {handle_id}) - New position: ({new_position.x:.1f},{new_position.y:.1f}) -> Unrotated: ({unrotated_new_pos.x:.1f},{unrotated_new_pos.y:.1f})")
+                    unrotated_pos = self.group._rotate_point(new_position, angle, pivot_rotated)
+
+                    # Step 2: Un-flip (NEW!)
+                    res_x = scene.render.resolution_x
+                    res_y = scene.render.resolution_y
+                    canonical_pos = self.group._unflip_position(unrotated_pos, res_x, res_y, flip_x, flip_y)
+
+                    current_canonical_perspective_corners.append(canonical_pos)
+                    print(f"Debug: Handle {i} (DRAGGED) - Rotated+Flipped: ({new_position.x:.1f},{new_position.y:.1f}) -> Unrotated: ({unrotated_pos.x:.1f},{unrotated_pos.y:.1f}) -> Canonical: ({canonical_pos.x:.1f},{canonical_pos.y:.1f})")
                 else:
-                    # For other handles, convert proportional offset to absolute position
-                    vse_corner = unrotated_vse_corners[i]
+                    # For other handles, convert existing proportional offset to canonical position
+                    # The existing offsets might be in old flip-dependent format, so we need to handle carefully
+                    vse_corner = canonical_vse_corners[i]
                     proportional_offset = existing_offsets[i]
-                    
+
                     # Convert proportional offset to absolute offset
-                    vse_width = unrotated_vse_corners[2].x - unrotated_vse_corners[0].x
-                    vse_height = unrotated_vse_corners[2].y - unrotated_vse_corners[0].y
+                    vse_width = canonical_vse_corners[2].x - canonical_vse_corners[0].x
+                    vse_height = canonical_vse_corners[1].y - canonical_vse_corners[0].y
                     absolute_offset_x = proportional_offset.x * vse_width
                     absolute_offset_y = proportional_offset.y * vse_height
-                    unrotated_perspective_pos = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
-                    print(f"Debug: Handle {i} (PRESERVED) - VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) -> Absolute: ({absolute_offset_x:.1f},{absolute_offset_y:.1f}) = Position: ({unrotated_perspective_pos.x:.1f},{unrotated_perspective_pos.y:.1f})")
-                    
-                    current_unrotated_perspective_corners.append(unrotated_perspective_pos)
+                    canonical_perspective_pos = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
+                    print(f"Debug: Handle {i} (PRESERVED) - Canonical VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) = Canonical Position: ({canonical_perspective_pos.x:.1f},{canonical_perspective_pos.y:.1f})")
+
+                    current_canonical_perspective_corners.append(canonical_perspective_pos)
             
-            # Calculate proportional offsets instead of absolute offsets
-            # This makes them scale-invariant
-            unrotated_proportional_corners = []
-            vse_width = unrotated_vse_corners[2].x - unrotated_vse_corners[0].x  # right - left
-            vse_height = unrotated_vse_corners[2].y - unrotated_vse_corners[0].y  # top - bottom
-            
-            for vse_corner, perspective_corner in zip(unrotated_vse_corners, current_unrotated_perspective_corners):
+            # Calculate proportional offsets in CANONICAL space
+            # This makes them scale-invariant AND flip/rotation-invariant
+            canonical_proportional_corners = []
+            vse_width = canonical_vse_corners[2].x - canonical_vse_corners[0].x  # right - left
+            vse_height = canonical_vse_corners[1].y - canonical_vse_corners[0].y  # top - bottom
+
+            for vse_corner, perspective_corner in zip(canonical_vse_corners, current_canonical_perspective_corners):
                 # Calculate proportional offset (0.0 to 1.0 range)
                 if vse_width != 0 and vse_height != 0:
                     prop_offset_x = (perspective_corner.x - vse_corner.x) / vse_width
@@ -621,77 +633,24 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                 else:
                     prop_offset_x = 0.0
                     prop_offset_y = 0.0
-                    
-                unrotated_proportional_corners.append(Vector([prop_offset_x, prop_offset_y]))
-            
-            # Store proportional offsets instead of absolute offsets
+
+                canonical_proportional_corners.append(Vector([prop_offset_x, prop_offset_y]))
+
+            # Store proportional offsets in CANONICAL space (flip/rotation-independent)
             from ..operators.perspective_core import store_perspective_offsets_in_strip
-            store_perspective_offsets_in_strip(strip, 
+            store_perspective_offsets_in_strip(strip,
                                                [Vector([0.0, 0.0]) for _ in range(4)],  # Dummy VSE corners (not used with proportional)
-                                               unrotated_proportional_corners)  # Store proportional values
-            
-            # All offsets are now proportional by default (no need for backwards compatibility flag)
-            
-            print(f"Debug: Updated single handle {handle_id} with PROPORTIONAL offsets")
-            print(f"Debug: VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
-            for i, prop_offset in enumerate(unrotated_proportional_corners):
-                print(f"Debug: Handle {i} proportional offset: ({prop_offset.x:.3f}, {prop_offset.y:.3f})")
+                                               canonical_proportional_corners)  # Store proportional values in canonical space
+
+            print(f"Debug: Updated single handle {handle_id} with CANONICAL PROPORTIONAL offsets (flip/rotation-independent)")
+            print(f"Debug: Canonical VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
+            print(f"Debug: Current flip state: flip_x={flip_x}, flip_y={flip_y}")
+            for i, prop_offset in enumerate(canonical_proportional_corners):
+                print(f"Debug: Handle {i} canonical proportional offset: ({prop_offset.x:.3f}, {prop_offset.y:.3f})")
             
         except Exception as e:
             print(f"Warning: Could not store single handle offset: {e}")
-    
-    def _get_unrotated_strip_geometry(self, strip, scene):
-        """
-        Get strip geometry as if rotation was 0, without modifying the strip.
-        
-        Returns:
-            Tuple of (corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y))
-        """
-        from ..operators.perspective_core import get_strip_geometry_with_flip_support
-        
-        # Get current geometry
-        rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
-        
-        # Get current rotation
-        current_rotation = 0
-        if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
-            current_rotation = strip.transform.rotation
-        
-        if current_rotation == 0:
-            # No rotation - return as is
-            return rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
-        
-        # Un-rotate the corners to get unrotated geometry
-        pivot = Vector((pivot_x, pivot_y))
-        unrotated_corners = []
-        
-        for corner in rotated_corners:
-            # Un-rotate by applying negative rotation
-            angle = -current_rotation
-            if flip_x != flip_y:  # Handle flip compensation
-                angle = -angle
-                
-            unrotated_corner = self._rotate_point(corner, angle, pivot)
-            unrotated_corners.append(unrotated_corner)
-        
-        return unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
-    
-    def _rotate_point(self, point, angle, origin):
-        """Rotate a 2D point around an origin"""
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        
-        # Translate to origin
-        x = point.x - origin.x
-        y = point.y - origin.y
-        
-        # Rotate
-        new_x = x * cos_a - y * sin_a
-        new_y = x * sin_a + y * cos_a
-        
-        # Translate back
-        return Vector([new_x + origin.x, new_y + origin.y])
-    
+
     def exit(self, context, cancel):
         """Exit perspective transform with cursor warping - EasyCrop implementation"""
         if self.handle_type != "center":
@@ -875,32 +834,32 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             if i < len(screen_corners):
                 screen_corner = screen_corners[i]  # SCREEN COORDINATES from VSE corners
                 
-                # Check for stored perspective corner positions (returns SCREEN COORDINATES)
+                # Try to get stored perspective positions first (returns SCREEN COORDINATES)
                 stored_positions = None
                 try:
                     stored_positions = self._get_stored_perspective_positions(strip, scene, view2d, res_x, res_y)
                 except Exception as e:
                     print(f"Warning: Could not get stored perspective positions: {e}")
                     stored_positions = None
-                
-                # Get flip-aware position in strip coordinate space (before rotation)
-                strip_corner = self._get_flip_aware_strip_position(i, corners, strip, scene, flip_x, flip_y)
-                
-                # Convert to screen coordinates using the same pipeline as original system
-                view_x = strip_corner.x - res_x / 2  
-                view_y = strip_corner.y - res_y / 2
-                screen_co = view2d.view_to_region(view_x, view_y, clip=False)
-                handle_x, handle_y = screen_co[0], screen_co[1]
-                
-                print(f"Debug: Handle {i} flip-aware strip pos: ({strip_corner.x:.1f},{strip_corner.y:.1f}) -> screen: ({handle_x:.1f},{handle_y:.1f})")
+
+                # Use stored positions if available, otherwise default to VSE corners
+                if stored_positions and i < len(stored_positions):
+                    # Use the stored perspective position (already in screen coordinates)
+                    handle_x, handle_y = stored_positions[i]
+                    print(f"Debug: Handle {i} using STORED position: screen ({handle_x:.1f},{handle_y:.1f})")
+                else:
+                    # Fall back to VSE corner position
+                    handle_x, handle_y = screen_corner.x, screen_corner.y
+                    print(f"Debug: Handle {i} using VSE CORNER fallback: screen ({handle_x:.1f},{handle_y:.1f})")
                 
                 # Set position using screen coordinates (SCREEN COORDINATES -> MATRIX)
-                gz.matrix_basis = Matrix.Translation((handle_x, handle_y, 0))
-                
-                # Apply rotation to matrix for proper handle alignment
+                # NOTE: Position is already in rotated space from get_strip_geometry_with_flip_support()
+                # We still need to apply rotation to the matrix for the DRAWING layer (handle squares)
+                # to rotate visually, but the POSITION is already correct
+                translation_matrix = Matrix.Translation((handle_x, handle_y, 0))
                 rot_matrix = Matrix.Rotation(angle, 4, 'Z')
-                gz.matrix_basis = gz.matrix_basis @ rot_matrix
-                
+                gz.matrix_basis = translation_matrix @ rot_matrix
+
                 gz.hide = False
             else:
                 gz.hide = True
@@ -936,23 +895,24 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
     
     def _get_stored_perspective_positions(self, strip, scene, view2d, res_x, res_y):
         """
-        Get stored perspective handle positions in screen coordinates with rotation-invariant loading.
-        
+        Get stored perspective handle positions in screen coordinates with flip/rotation-independent loading.
+
         COORDINATE SYSTEM FLOW:
-        1. Load rotation-invariant offsets (unrotated strip space)
-        2. Get unrotated VSE corners (strip space)
-        3. Apply offsets to get unrotated perspective corners (strip space)
-        4. Rotate perspective corners to current rotation (strip space)
-        5. Convert to view space (centered coordinates)
-        6. Convert to screen space (region pixels)
-        
+        1. Load flip/rotation-independent offsets (canonical/unflipped/unrotated space)
+        2. Get canonical VSE corners (unflipped/unrotated strip space)
+        3. Apply offsets to get canonical perspective corners
+        4. Apply current flip to get flipped perspective corners
+        5. Apply current rotation to get final rotated+flipped corners
+        6. Convert to view space (centered coordinates)
+        7. Convert to screen space (region pixels)
+
         Returns:
             List of (x, y) tuples in screen coordinates, or None if not stored
         """
         if not strip:
             return None
-        
-        # Try to get stored rotation-invariant offsets (UNROTATED STRIP COORDINATE SPACE)
+
+        # Try to get stored flip/rotation-independent offsets (CANONICAL SPACE)
         from ..operators.perspective_core import get_perspective_offsets_from_strip
         offsets = get_perspective_offsets_from_strip(strip)
         
@@ -964,50 +924,93 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             current_rotation = 0
             if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
                 current_rotation = strip.transform.rotation
-                
-            # Get UNROTATED VSE corners without modifying the strip
-            unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_unrotated_strip_geometry(strip, scene)
-            
-            # Calculate current VSE dimensions for proportional offset conversion
-            vse_width = unrotated_corners[2].x - unrotated_corners[0].x  # right - left
-            vse_height = unrotated_corners[2].y - unrotated_corners[0].y  # top - bottom
-            
-            print(f"Debug: NORMAL LOADING - Proportional positions")
+
+            # Get CANONICAL VSE corners (unflipped+unrotated) without modifying the strip
+            canonical_corners, (canonical_pivot_x, canonical_pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_canonical_strip_geometry(strip, scene)
+            canonical_pivot = (canonical_pivot_x, canonical_pivot_y)
+
+            # Calculate canonical VSE dimensions for proportional offset conversion
+            vse_width = canonical_corners[2].x - canonical_corners[0].x  # right - left
+            vse_height = canonical_corners[1].y - canonical_corners[0].y  # top - bottom
+
+            print(f"Debug: FLIP/ROTATION-INDEPENDENT LOADING")
             print(f"Debug: Current rotation: {math.degrees(current_rotation):.1f}°")
+            print(f"Debug: Current flip: flip_x={flip_x}, flip_y={flip_y}")
             print(f"Debug: Current scale: ({scale_x:.3f}, {scale_y:.3f})")
-            print(f"Debug: Current VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
-            print(f"Debug: Unrotated VSE corners: {[f'({c.x:.1f},{c.y:.1f})' for c in unrotated_corners]}")
-            print(f"Debug: Stored proportional offsets: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
-            
-            # Simple approach: Use offsets as stored, no remapping or direction adjustment
-            remapped_offsets = offsets
-            
-            print(f"Debug: Simple approach - Using stored offsets directly: {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
-            
-            # Apply remapped proportional offsets to current VSE dimensions
-            unrotated_perspective_corners = []
-            for i, (vse_corner, proportional_offset) in enumerate(zip(unrotated_corners, remapped_offsets)):
-                # Convert proportional offset back to absolute offset based on current VSE dimensions
+            print(f"Debug: Canonical VSE dimensions: {vse_width:.1f} x {vse_height:.1f}")
+            print(f"Debug: Canonical VSE corners: {[f'({c.x:.1f},{c.y:.1f})' for c in canonical_corners]}")
+            print(f"Debug: Stored proportional offsets (canonical): {[f'({o.x:.3f},{o.y:.3f})' for o in offsets]}")
+
+            # REMAP offsets AND flip directions based on flip state
+            # When flipped, we need to:
+            # 1. Remap which corner the offset is associated with (EasyCrop pattern)
+            # 2. Flip the DIRECTION of the offset (flip the sign)
+            remapped_offsets = []
+            for i in range(4):
+                # Determine which stored offset to use for this canonical corner
+                offset_index = i
+
+                # Apply the INVERSE of the corner remapping that will happen during flip
+                if flip_x and flip_y:
+                    # Both flips: diagonal opposite
+                    corner_remap = [2, 3, 0, 1]
+                    offset_index = corner_remap[i]
+                elif flip_x:
+                    # X-flip: swap left↔right
+                    corner_remap = [3, 2, 1, 0]
+                    offset_index = corner_remap[i]
+                elif flip_y:
+                    # Y-flip: swap top↔bottom
+                    corner_remap = [1, 0, 3, 2]
+                    offset_index = corner_remap[i]
+
+                # Get the offset for this corner
+                offset = offsets[offset_index]
+
+                # CRITICAL: Flip the DIRECTION of the offset
+                # If flip_x, an offset moving right (+x) should become moving left (-x)
+                offset_x = -offset.x if flip_x else offset.x
+                offset_y = -offset.y if flip_y else offset.y
+
+                remapped_offsets.append(Vector([offset_x, offset_y]))
+
+                if offset_index != i or flip_x or flip_y:
+                    print(f"Debug: Corner {i} uses offset {offset_index}: ({offset.x:.3f},{offset.y:.3f}) -> ({offset_x:.3f},{offset_y:.3f})")
+
+            # Apply remapped proportional offsets to canonical VSE dimensions
+            canonical_perspective_corners = []
+            for i, (vse_corner, proportional_offset) in enumerate(zip(canonical_corners, remapped_offsets)):
+                # Convert proportional offset back to absolute offset based on canonical VSE dimensions
                 absolute_offset_x = proportional_offset.x * vse_width
                 absolute_offset_y = proportional_offset.y * vse_height
-                
-                unrotated_perspective_corner = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
-                unrotated_perspective_corners.append(unrotated_perspective_corner)
-                print(f"Debug: Handle {i} - VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) * Dimensions: ({vse_width:.1f},{vse_height:.1f}) = Absolute: ({absolute_offset_x:.1f},{absolute_offset_y:.1f}) = Final: ({unrotated_perspective_corner.x:.1f},{unrotated_perspective_corner.y:.1f})")
-            
-            # Rotate perspective corners to current rotation
+
+                canonical_perspective_corner = Vector([vse_corner.x + absolute_offset_x, vse_corner.y + absolute_offset_y])
+                canonical_perspective_corners.append(canonical_perspective_corner)
+                print(f"Debug: Handle {i} - Canonical VSE: ({vse_corner.x:.1f},{vse_corner.y:.1f}) + Proportional: ({proportional_offset.x:.3f},{proportional_offset.y:.3f}) = Canonical Position: ({canonical_perspective_corner.x:.1f},{canonical_perspective_corner.y:.1f})")
+
+            # Apply current FLIP to canonical positions
+            flipped_perspective_corners = []
+            for i, canonical_corner in enumerate(canonical_perspective_corners):
+                flipped_corner = self._apply_flip_to_position(canonical_corner, res_x, res_y, flip_x, flip_y)
+                flipped_perspective_corners.append(flipped_corner)
+                print(f"Debug: Handle {i} - Applying flip: Canonical ({canonical_corner.x:.1f},{canonical_corner.y:.1f}) -> Flipped ({flipped_corner.x:.1f},{flipped_corner.y:.1f})")
+
+            # Apply current ROTATION to flipped positions
+            # Need to get the current (flipped) pivot for rotation
+            from ..operators.perspective_core import get_strip_geometry_with_flip_support
+            _, (pivot_x, pivot_y), _ = get_strip_geometry_with_flip_support(strip, scene)
             pivot = Vector((pivot_x, pivot_y))
             perspective_positions = []
-            
-            for i, unrotated_corner in enumerate(unrotated_perspective_corners):
+
+            for i, flipped_corner in enumerate(flipped_perspective_corners):
                 # Apply current rotation
                 angle = current_rotation
                 if flip_x != flip_y:  # Handle flip compensation
                     angle = -angle
-                    
-                rotated_corner = self._rotate_point(unrotated_corner, angle, pivot)
-                
-                print(f"Debug: Handle {i} - Rotating: ({unrotated_corner.x:.1f},{unrotated_corner.y:.1f}) -> ({rotated_corner.x:.1f},{rotated_corner.y:.1f})")
+
+                rotated_corner = self._rotate_point(flipped_corner, angle, pivot)
+
+                print(f"Debug: Handle {i} - Rotating: Flipped ({flipped_corner.x:.1f},{flipped_corner.y:.1f}) -> Rotated ({rotated_corner.x:.1f},{rotated_corner.y:.1f})")
                 
                 # Convert to view coordinates (VIEW SPACE - centered at origin)
                 view_x = rotated_corner.x - res_x / 2
@@ -1315,8 +1318,146 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             print(f"Debug: Handle {handle_index} -> Corner {target_corner_index}, offset ({offset_x:.3f},{offset_y:.3f}) -> strip ({final_position.x:.1f},{final_position.y:.1f})")
             return final_position
         
-        # Fallback 
+        # Fallback
         return strip_corners[handle_index] if handle_index < len(strip_corners) else Vector((0, 0))
+
+    def _unflip_position(self, position, res_x, res_y, flip_x, flip_y):
+        """
+        Un-flip a position to get it into canonical (unflipped) space.
+        This reverses the flip transformations applied by get_strip_geometry_with_flip_support.
+
+        Args:
+            position: Vector in flipped space
+            res_x, res_y: Resolution (mirror happens around resolution, not pivot!)
+            flip_x: Whether X is flipped
+            flip_y: Whether Y is flipped
+
+        Returns:
+            Vector in unflipped space
+        """
+        x = position.x
+        y = position.y
+
+        # Reverse flip transformations
+        # Blender mirrors around resolution: flipped_x = res_x - x
+        # To reverse: x = res_x - flipped_x (same operation!)
+        if flip_x:
+            x = res_x - x
+        if flip_y:
+            y = res_y - y
+
+        return Vector([x, y])
+
+    def _apply_flip_to_position(self, position, res_x, res_y, flip_x, flip_y):
+        """
+        Apply flip to a position to get it into flipped space.
+        This applies the same flip transformations as get_strip_geometry_with_flip_support.
+
+        Args:
+            position: Vector in unflipped space
+            res_x, res_y: Resolution (mirror happens around resolution, not pivot!)
+            flip_x: Whether to flip X
+            flip_y: Whether to flip Y
+
+        Returns:
+            Vector in flipped space
+        """
+        x = position.x
+        y = position.y
+
+        # Apply flip transformations
+        # Blender mirrors around resolution: flipped_x = res_x - x
+        if flip_x:
+            x = res_x - x
+        if flip_y:
+            y = res_y - y
+
+        return Vector([x, y])
+
+    def _get_canonical_strip_geometry(self, strip, scene):
+        """
+        Get strip geometry in canonical space (no rotation, no flip).
+        This is the base geometry for flip/rotation-independent storage.
+
+        Returns:
+            Tuple of (corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y))
+        """
+        # First get unrotated (but still flipped) geometry
+        unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = self._get_unrotated_strip_geometry(strip, scene)
+
+        # Then un-flip the corners to get canonical geometry
+        res_x = scene.render.resolution_x
+        res_y = scene.render.resolution_y
+        canonical_corners = []
+
+        for corner in unrotated_corners:
+            canonical_corner = self._unflip_position(corner, res_x, res_y, flip_x, flip_y)
+            canonical_corners.append(canonical_corner)
+
+        # Also un-flip the pivot for canonical space
+        # Blender flips pivot with: pivot_x = res_x - pivot_x
+        # To reverse: same operation (it's symmetric)
+        canonical_pivot_x = pivot_x
+        canonical_pivot_y = pivot_y
+        if flip_x:
+            canonical_pivot_x = res_x - pivot_x
+        if flip_y:
+            canonical_pivot_y = res_y - pivot_y
+
+        return canonical_corners, (canonical_pivot_x, canonical_pivot_y), (scale_x, scale_y, flip_x, flip_y)
+
+    def _get_unrotated_strip_geometry(self, strip, scene):
+        """
+        Get strip geometry as if rotation was 0, without modifying the strip.
+        NOTE: This still includes flip transformations!
+
+        Returns:
+            Tuple of (corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y))
+        """
+        from ..operators.perspective_core import get_strip_geometry_with_flip_support
+
+        # Get current geometry
+        rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(strip, scene)
+
+        # Get current rotation
+        current_rotation = 0
+        if hasattr(strip, 'transform') and hasattr(strip.transform, 'rotation'):
+            current_rotation = strip.transform.rotation
+
+        if current_rotation == 0:
+            # No rotation - return as is
+            return rotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
+
+        # Un-rotate the corners to get unrotated geometry
+        pivot = Vector((pivot_x, pivot_y))
+        unrotated_corners = []
+
+        for corner in rotated_corners:
+            # Un-rotate by applying negative rotation
+            angle = -current_rotation
+            if flip_x != flip_y:  # Handle flip compensation
+                angle = -angle
+
+            unrotated_corner = self._rotate_point(corner, angle, pivot)
+            unrotated_corners.append(unrotated_corner)
+
+        return unrotated_corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y)
+
+    def _rotate_point(self, point, angle, origin):
+        """Rotate a 2D point around an origin"""
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+
+        # Translate to origin
+        x = point.x - origin.x
+        y = point.y - origin.y
+
+        # Rotate
+        new_x = x * cos_a - y * sin_a
+        new_y = x * sin_a + y * cos_a
+
+        # Translate back
+        return Vector([new_x + origin.x, new_y + origin.y])
 
 
 # Registration functions
