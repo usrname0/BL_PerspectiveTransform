@@ -622,6 +622,8 @@ def get_perspective_transform_info(strip):
 # GPU-based Perspective Rendering System
 _gpu_draw_handler = None
 _gpu_enabled_strips = set()
+_offscreen_buffers = {}  # Cache offscreen buffers per resolution
+_transformed_images = {}  # Cache transformed images per strip
 
 
 def _enable_perspective_rendering(strip):
@@ -663,9 +665,32 @@ def _disable_perspective_rendering(strip):
 
 
 def _draw_perspective_gpu_overlay():
-    """GPU draw handler that renders perspective-distorted texture quads - TEMPORARILY DISABLED"""
-    # Temporarily disable GPU overlay until handles are positioned correctly
-    return
+    """GPU draw handler that renders perspective-distorted overlay quads"""
+    try:
+        # Get current context
+        context = bpy.context
+        if not context:
+            return
+
+        # Get current handle positions in screen coordinates
+        screen_positions = _get_current_handle_positions(context)
+
+        if screen_positions and len(screen_positions) == 4:
+            # Try to get the strip texture
+            scene = context.scene
+            strip = None
+            if scene and scene.sequence_editor:
+                strip = scene.sequence_editor.active_strip
+
+            texture = None
+            if strip:
+                texture = _get_strip_texture(strip, context)
+
+            # Render the perspective overlay quad with texture (or fallback to cyan overlay)
+            _render_perspective_overlay_quad(screen_positions, texture)
+
+    except Exception as e:
+        print(f"Debug: GPU overlay draw error: {e}")
 
 
 def _get_current_handle_positions(context):
@@ -706,7 +731,22 @@ def _get_current_handle_positions(context):
             
         # Get unrotated VSE corners (same as gizmo system)
         corners, (pivot_x, pivot_y), (scale_x, scale_y, flip_x, flip_y) = get_strip_geometry_with_flip_support(active_strip, scene)
-        
+
+        # CRITICAL: Remap corners from position-based to identity-based order (same as gizmo refresh())
+        # get_strip_geometry_with_flip_support returns corners in POSITION-based order
+        # (always [bottom-left, top-left, top-right, bottom-right] positionally)
+        # But we need IDENTITY-based order (Corner 0, Corner 1, Corner 2, Corner 3)
+        if flip_x and flip_y:
+            # Both flips: diagonal swap
+            corners = [corners[2], corners[3], corners[0], corners[1]]
+        elif flip_x:
+            # X-flip only: left↔right swap
+            corners = [corners[3], corners[2], corners[1], corners[0]]
+        elif flip_y:
+            # Y-flip only: top↔bottom swap
+            corners = [corners[1], corners[0], corners[3], corners[2]]
+        # else: no flip, corners already in identity order
+
         # Un-rotate if needed to get unrotated corners (same as gizmo system)
         if current_rotation != 0:
             pivot = Vector((pivot_x, pivot_y))
@@ -777,45 +817,442 @@ def _get_current_handle_positions(context):
         return None
 
 
-def _render_perspective_overlay_quad(screen_corners):
-    """Render a perspective-distorted overlay quad"""
+def _get_or_create_offscreen_buffer(width, height):
+    """Get or create an offscreen buffer for rendering"""
+    global _offscreen_buffers
+
+    key = (width, height)
+
+    # Check if we have a cached buffer
+    if key in _offscreen_buffers:
+        return _offscreen_buffers[key]
+
+    try:
+        import gpu
+
+        # Create offscreen buffer
+        offscreen = gpu.types.GPUOffScreen(width, height)
+        _offscreen_buffers[key] = offscreen
+
+        print(f"Debug: Created offscreen buffer {width}x{height}")
+        return offscreen
+
+    except Exception as e:
+        print(f"Debug: Error creating offscreen buffer: {e}")
+        return None
+
+
+def _render_perspective_to_offscreen(strip, context, screen_corners, texture):
+    """
+    Render perspective-transformed texture to an offscreen buffer.
+    Returns a rendered image that can be displayed in VSE.
+    """
     try:
         import gpu
         from gpu_extras.batch import batch_for_shader
-        
+        from mathutils import Matrix
+        import numpy as np
+
+        if not texture:
+            return None
+
+        # Get render resolution for the offscreen buffer
+        scene = context.scene
+        width = scene.render.resolution_x
+        height = scene.render.resolution_y
+
+        # Get or create offscreen buffer
+        offscreen = _get_or_create_offscreen_buffer(width, height)
+        if not offscreen:
+            return None
+
+        # Bind the offscreen buffer
+        with offscreen.bind():
+            # Clear the buffer
+            gpu.state.clear(color=(0.0, 0.0, 0.0, 0.0))
+
+            # Set up viewport
+            gpu.state.viewport_set(0, 0, width, height)
+
+            # Get the perspective shader
+            shader = _get_perspective_correct_shader()
+            if not shader:
+                return None
+
+            # Convert screen corners to render resolution coordinates
+            # Screen corners are in viewport space, we need to map to render resolution
+            region = context.region
+            view2d = region.view2d
+
+            # Map screen corners back to strip space, then to normalized [0,1] coordinates
+            render_corners = []
+            res_x = scene.render.resolution_x
+            res_y = scene.render.resolution_y
+
+            for corner in screen_corners:
+                # Convert screen to view space
+                view_pos = view2d.region_to_view(corner[0], corner[1])
+
+                # Convert view to strip space
+                strip_x = view_pos[0] + res_x / 2
+                strip_y = view_pos[1] + res_y / 2
+
+                # Normalize to [0, res] coordinates for rendering
+                render_corners.append((strip_x, strip_y))
+
+            # Create vertices for rendering (full render resolution quad)
+            vertices = [
+                render_corners[0], render_corners[1], render_corners[2],  # Triangle 1
+                render_corners[0], render_corners[2], render_corners[3]   # Triangle 2
+            ]
+
+            batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
+
+            # Set up projection for render resolution
+            view_matrix = Matrix.Identity(4)
+            projection_matrix = Matrix.OrthoProjection('XY', 4)
+            projection_matrix[0][0] = 2.0 / width
+            projection_matrix[1][1] = 2.0 / height
+            projection_matrix[0][3] = -1.0
+            projection_matrix[1][3] = -1.0
+
+            mvp_matrix = projection_matrix @ view_matrix
+
+            # Disable blending for opaque rendering
+            gpu.state.blend_set('NONE')
+
+            # Bind shader and set uniforms
+            shader.bind()
+            shader.uniform_sampler("image", texture)
+            shader.uniform_float("ModelViewProjectionMatrix", mvp_matrix)
+            shader.uniform_float("corner0", (float(render_corners[0][0]), float(render_corners[0][1])))
+            shader.uniform_float("corner1", (float(render_corners[1][0]), float(render_corners[1][1])))
+            shader.uniform_float("corner2", (float(render_corners[2][0]), float(render_corners[2][1])))
+            shader.uniform_float("corner3", (float(render_corners[3][0]), float(render_corners[3][1])))
+
+            # Draw
+            batch.draw(shader)
+
+        # Read pixels from offscreen buffer
+        buffer = offscreen.texture_color.read()
+
+        # Convert buffer to numpy array
+        pixels = np.frombuffer(buffer, dtype=np.float32)
+
+        # Create or update image in bpy.data.images
+        image_name = f"PerspectiveTransform_{strip.name}"
+
+        if image_name in bpy.data.images:
+            img = bpy.data.images[image_name]
+            # Check if size matches
+            if img.size[0] != width or img.size[1] != height:
+                bpy.data.images.remove(img)
+                img = bpy.data.images.new(image_name, width, height, alpha=True)
+        else:
+            img = bpy.data.images.new(image_name, width, height, alpha=True)
+
+        # Update image pixels
+        img.pixels[:] = pixels
+        img.update()
+
+        print(f"Debug: Rendered perspective transform to image {image_name}")
+        return img
+
+    except Exception as e:
+        print(f"Debug: Error rendering perspective to offscreen: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def _get_strip_texture(strip, context):
+    """
+    Get GPU texture from strip content at current frame.
+    Returns a gpu.types.GPUTexture or None if not available.
+    """
+    try:
+        import gpu
+        import numpy as np
+
+        # For now, we'll render the strip's current frame to get its texture
+        # This requires rendering the VSE to an offscreen buffer
+
+        scene = context.scene
+        if not scene.sequence_editor:
+            return None
+
+        # Get strip frame at current time
+        frame = scene.frame_current
+
+        # Check if strip is visible at this frame
+        if not is_strip_visible_at_frame(strip, frame):
+            return None
+
+        # Try to get image data from strip
+        # Method 1: For image strips, load and access the image directly
+        if strip.type == 'IMAGE':
+            # Get the directory and filename from the strip
+            if hasattr(strip, 'directory') and hasattr(strip, 'elements') and len(strip.elements) > 0:
+                elem = strip.elements[0]
+                if hasattr(elem, 'filename') and elem.filename:
+                    import os
+                    filepath = os.path.join(strip.directory, elem.filename)
+
+                    # Check if image is already loaded
+                    img = None
+                    for existing_img in bpy.data.images:
+                        if existing_img.filepath == filepath or elem.filename in existing_img.name:
+                            img = existing_img
+                            break
+
+                    # Load image if not already loaded
+                    if img is None and os.path.exists(filepath):
+                        try:
+                            img = bpy.data.images.load(filepath, check_existing=True)
+                            print(f"Debug: Loaded image from {filepath}")
+                        except Exception as e:
+                            print(f"Debug: Could not load image: {e}")
+
+                    if img:
+                        return _image_to_gpu_texture(img)
+
+        # Method 2: For movie strips, we need to extract the current frame
+        # This is more complex and might require rendering
+        if strip.type == 'MOVIE':
+            # TODO: Implement movie frame extraction
+            # This would require either:
+            # - Using ffmpeg/movie clip editor to get current frame
+            # - Rendering the strip to an offscreen buffer
+            print("Debug: Movie strip texture extraction not yet implemented")
+            return None
+
+        # Method 3: Render the strip to an offscreen buffer (universal approach)
+        # This would work for all strip types but is more complex
+        # TODO: Implement offscreen rendering approach
+
+        return None
+
+    except Exception as e:
+        print(f"Debug: Error getting strip texture: {e}")
+        return None
+
+
+def _image_to_gpu_texture(image):
+    """Convert a Blender image to a GPU texture"""
+    try:
+        import gpu
+        import numpy as np
+
+        if not image or not image.pixels:
+            return None
+
+        # Get image dimensions
+        width = image.size[0]
+        height = image.size[1]
+
+        if width == 0 or height == 0:
+            return None
+
+        # Get pixel data as numpy array
+        # Blender stores pixels as flat RGBA array
+        pixels = np.array(image.pixels[:], dtype=np.float32)
+
+        # Reshape to (height, width, 4) for RGBA
+        pixels = pixels.reshape((height, width, 4))
+
+        # Flip vertically (Blender images are stored bottom-to-top)
+        pixels = np.flipud(pixels)
+
+        # Flatten back for buffer
+        pixels = pixels.flatten()
+
+        # Create GPU buffer from numpy array
+        buffer = gpu.types.Buffer('FLOAT', len(pixels), pixels.tolist())
+
+        # Create GPU texture with buffer
+        texture = gpu.types.GPUTexture((width, height), format='RGBA32F', data=buffer)
+
+        print(f"Debug: Created GPU texture {width}x{height}")
+        return texture
+
+    except Exception as e:
+        print(f"Debug: Error converting image to GPU texture: {e}")
+        return None
+
+
+def _get_perspective_correct_shader():
+    """Get or create the perspective-correct texture shader using homography"""
+    import gpu
+
+    # Vertex shader - passes through position and screen coordinates
+    vertex_shader = '''
+        uniform mat4 ModelViewProjectionMatrix;
+
+        in vec2 pos;
+
+        out vec2 screenPos;
+
+        void main()
+        {
+            screenPos = pos;
+            gl_Position = ModelViewProjectionMatrix * vec4(pos, 0.0, 1.0);
+        }
+    '''
+
+    # Fragment shader - uses bilinear inverse mapping for perspective-correct UV calculation
+    fragment_shader = '''
+        uniform sampler2D image;
+        uniform vec2 corner0;  // Screen space quad corners
+        uniform vec2 corner1;
+        uniform vec2 corner2;
+        uniform vec2 corner3;
+
+        in vec2 screenPos;
+        out vec4 fragColor;
+
+        // Bilinear interpolation to find normalized coordinates within quad
+        vec2 getBilinearCoords(vec2 p, vec2 c0, vec2 c1, vec2 c2, vec2 c3)
+        {
+            // Iterative bilinear inverse mapping
+            // Start with a guess
+            vec2 uv = vec2(0.5, 0.5);
+
+            // Newton-Raphson iteration to find uv
+            for (int i = 0; i < 10; i++)
+            {
+                float u = uv.x;
+                float v = uv.y;
+
+                // Bilinear interpolation formula
+                // Corner layout: 0=bottom-left, 1=top-left, 2=top-right, 3=bottom-right
+                vec2 pos = (1.0 - u) * (1.0 - v) * c0 +
+                          u * (1.0 - v) * c3 +
+                          u * v * c2 +
+                          (1.0 - u) * v * c1;
+
+                vec2 error = p - pos;
+
+                if (length(error) < 0.1) break;
+
+                // Jacobian
+                vec2 du = (1.0 - v) * (c3 - c0) + v * (c2 - c1);
+                vec2 dv = (1.0 - u) * (c1 - c0) + u * (c2 - c3);
+
+                float det = du.x * dv.y - du.y * dv.x;
+                if (abs(det) < 0.001) break;
+
+                // Newton-Raphson update
+                vec2 delta = vec2(
+                    (error.x * dv.y - error.y * dv.x) / det,
+                    (error.y * du.x - error.x * du.y) / det
+                );
+
+                uv += delta;
+                uv = clamp(uv, 0.0, 1.0);
+            }
+
+            return uv;
+        }
+
+        void main()
+        {
+            // Find normalized coordinates within the quad
+            vec2 uv = getBilinearCoords(screenPos, corner0, corner1, corner2, corner3);
+
+            // Flip V coordinate (texture is upside down)
+            uv.y = 1.0 - uv.y;
+
+            // Sample texture
+            fragColor = texture(image, uv);
+        }
+    '''
+
+    try:
+        shader = gpu.types.GPUShader(vertex_shader, fragment_shader)
+        return shader
+    except Exception as e:
+        print(f"Debug: Error creating perspective shader: {e}")
+        return None
+
+
+def _render_perspective_overlay_quad(screen_corners, texture=None):
+    """Render a perspective-distorted overlay quad with optional texture"""
+    try:
+        import gpu
+        from gpu_extras.batch import batch_for_shader
+        from mathutils import Matrix
+
         print(f"Debug: Rendering overlay quad with corners: {screen_corners}")
-        
-        # Create a semi-transparent overlay showing the perspective effect
-        overlay_color = (0.0, 1.0, 1.0, 0.2)  # Cyan with transparency
-        
-        # Use built-in shader for colored geometry
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-        
-        # Create triangulated quad (two triangles)
-        # Ensure proper winding order for quad: 0->1->2, 0->2->3
-        vertices = [
-            screen_corners[0],  # Corner 0
-            screen_corners[1],  # Corner 1
-            screen_corners[2],  # Corner 2
-            screen_corners[0],  # Corner 0 (second triangle)
-            screen_corners[2],  # Corner 2
-            screen_corners[3]   # Corner 3
-        ]
-        
-        print(f"Debug: Triangle vertices: {vertices}")
-        
-        batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
-        
-        # Enable blending for transparency
-        gpu.state.blend_set('ALPHA')
-        
-        shader.bind()
-        shader.uniform_float("color", overlay_color)
-        batch.draw(shader)
-        
+
+        if texture is not None:
+            # Disable blending for opaque texture rendering
+            gpu.state.blend_set('NONE')
+            # Render with texture using custom perspective-correct shader
+            print(f"Debug: Rendering with texture: {texture}")
+
+            # Get custom shader
+            shader = _get_perspective_correct_shader()
+            if shader is None:
+                print("Debug: Failed to create shader, falling back to colored overlay")
+                texture = None  # Fall through to colored overlay
+            else:
+                # Create two triangles to fill the quad
+                vertices = [
+                    screen_corners[0], screen_corners[1], screen_corners[2],  # Triangle 1
+                    screen_corners[0], screen_corners[2], screen_corners[3]   # Triangle 2
+                ]
+
+                batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
+
+                # Set up orthographic projection matrix for 2D screen space
+                region = bpy.context.region
+                view_matrix = Matrix.Identity(4)
+                projection_matrix = Matrix.OrthoProjection('XY', 4)
+                projection_matrix[0][0] = 2.0 / region.width
+                projection_matrix[1][1] = 2.0 / region.height
+                projection_matrix[0][3] = -1.0
+                projection_matrix[1][3] = -1.0
+
+                mvp_matrix = projection_matrix @ view_matrix
+
+                shader.bind()
+                shader.uniform_sampler("image", texture)
+                shader.uniform_float("ModelViewProjectionMatrix", mvp_matrix)
+
+                # Pass quad corners as individual vec2 uniforms
+                try:
+                    shader.uniform_float("corner0", (float(screen_corners[0][0]), float(screen_corners[0][1])))
+                    shader.uniform_float("corner1", (float(screen_corners[1][0]), float(screen_corners[1][1])))
+                    shader.uniform_float("corner2", (float(screen_corners[2][0]), float(screen_corners[2][1])))
+                    shader.uniform_float("corner3", (float(screen_corners[3][0]), float(screen_corners[3][1])))
+                except Exception as e:
+                    print(f"Debug: Error setting quad corners uniform: {e}")
+
+                batch.draw(shader)
+
+        else:
+            # Fallback: render semi-transparent cyan overlay (original behavior)
+            # Enable alpha blending for transparent overlay
+            gpu.state.blend_set('ALPHA')
+
+            overlay_color = (0.0, 1.0, 1.0, 0.2)  # Cyan with transparency
+
+            shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+            vertices = [
+                screen_corners[0], screen_corners[1], screen_corners[2],
+                screen_corners[0], screen_corners[2], screen_corners[3]
+            ]
+
+            batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
+
+            shader.bind()
+            shader.uniform_float("color", overlay_color)
+            batch.draw(shader)
+
         # Restore blending
         gpu.state.blend_set('NONE')
-        
+
     except Exception as e:
         print(f"Debug: Overlay quad render error: {e}")
 
