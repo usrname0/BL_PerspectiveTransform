@@ -80,10 +80,11 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     def setup(self):
         """Initialise handle state and the flags that keep it visible."""
         self.handle_index = 0
+        # use_draw_modal keeps draw() running during a drag. There is no
+        # use_draw_select property on Gizmo, and draw_select() is only called
+        # for 3D gizmo groups, so a 2D gizmo does hit detection in test_select.
         self.use_draw_modal = True
-        self.use_draw_select = True
         self.use_event_handle_all = True
-        self.use_select_background = False
         self.use_grab_cursor = True
         self.hide = False
         self.scale_basis = HANDLE_RADIUS
@@ -100,10 +101,6 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     def draw(self, context):
         """Draw the handle square."""
         self._draw_square(COLOR_HANDLE_ACTIVE if self.is_highlight else COLOR_HANDLE)
-
-    def draw_select(self, context, select_id):
-        """Draw during selection and modal drags."""
-        self._draw_square(COLOR_HANDLE_ACTIVE)
 
     def _draw_square(self, color):
         """Draw a filled square with a dark border at the handle's position."""
