@@ -9,13 +9,13 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 ![Dragging a corner handle in the VSE preview](./examples/demo.gif)
 
 Corners can be dragged anywhere within the strip's original geometry, which can
-be scaled, rotated, cropped, etc. as usual.
+be scaled out of bounds, rotated, cropped, etc. as usual.
 
 ![An extreme corner-pin with headroom added](./examples/demo_complex.png)
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
-so Blender evaluates it as part of normal strip rendering. It is not a preview
-overlay: what you see is what renders.
+so Blender evaluates it as part of normal strip rendering. What you see is what
+renders.
 
 Because the transform lives in a node group on the strip, it survives save and
 load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
@@ -58,9 +58,3 @@ It should work immediately after installing. If the tool does not appear:
 1. Check you are on Blender 5.0 or newer - on 4.x the addon will not load
 2. Check the console for errors
 3. Restart Blender
-
-## Development
-
-Run the test suite headlessly:
-
-    blender --factory-startup --background --python tests/run.py
