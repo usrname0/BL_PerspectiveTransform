@@ -4,7 +4,7 @@
 # Blender Extension Manifest
 schema_version = "1.0.0"
 id = "BL_PerspectiveTransform"
-version = "1.0.0"
+version = "2.0.0"
 
 name = "BL Perspective Transform"
 tagline = "Use corner handles for perspective distortion in the Blender VSE Preview window"
@@ -21,7 +21,7 @@ website = "https://github.com/usrname0/BL_PerspectiveTransform"
 tags = ["Sequencer", "User Interface"]
 
 # Requirements
-blender_version_min = "4.4.0"
+blender_version_min = "5.0.0"
 
 # License - must be GPL compatible
 license = ["SPDX:GPL-3.0-or-later"]

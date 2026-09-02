@@ -1,291 +1,135 @@
 """
-BL Perspective Transform - Perspective distortion tool for VSE
+BL Perspective Transform - Corner-pin perspective for the Blender VSE.
 
-This addon provides:
-- 4-corner perspective transformation handles
-- Working menu integration with proper context handling
-- Simple toolbar tool (standard Blender behavior)
-- Proper keymap handling with P key for perspective transform
-- Real-time preview of perspective distortion
+Drag the four corners of a strip in the preview to distort it, and have that
+distortion render. The transform is stored as a Corner Pin node inside a
+compositor strip modifier, so Blender evaluates it as part of the normal strip
+pipeline rather than this addon painting a preview-only overlay.
+
+Requires Blender 5.0 or newer, which is where compositor strip modifiers were
+added.
 """
+
+import bpy
+from bpy.types import WorkSpaceTool
+from pathlib import Path
+
+from .gizmos import (PERSPECTIVE_GGT_perspective_handles,
+                     PERSPECTIVE_GT_perspective_handle,
+                     register_perspective_handles_gizmo,
+                     unregister_perspective_handles_gizmo)
+from .operators.perspective_operators import classes as operator_classes
 
 bl_info = {
     "name": "BL Perspective Transform",
-    "description": "Perspective transformation tool for Blender's Video Sequence Editor",
+    "description": "Corner-pin perspective transforms for Blender's Video Sequence Editor",
     "author": "usrname0",
-    "version": (1, 0, 0),
-    "blender": (4, 4, 0),
+    "version": (2, 0, 0),
+    "blender": (5, 0, 0),
     "location": "Sequencer > Preview > Toolbar",
-    "warning": "",
-    "doc_url": "",
-    "tracker_url": "",
-    "category": "Sequencer"
+    "category": "Sequencer",
 }
 
-import bpy
-import os
-from pathlib import Path
-from bpy.types import WorkSpaceTool
-
-# Import operators with error handling
-try:
-    from .operators.perspective_operators import (
-        PERSPECTIVE_OT_transform, 
-        PERSPECTIVE_OT_select_and_transform, 
-        PERSPECTIVE_OT_activate_tool
-    )
-    from .operators.perspective_core import (
-        is_strip_visible_at_frame,
-        get_perspective_state,
-        set_perspective_active,
-        clear_perspective_state
-    )
-    operators_imported = True
-except ImportError as e:
-    operators_imported = False
-
-# Import gizmos with error handling
-try:
-    from .gizmos import (
-        PERSPECTIVE_GT_perspective_handle,
-        PERSPECTIVE_GGT_perspective_handles,
-        register_perspective_handles_gizmo,
-        unregister_perspective_handles_gizmo
-    )
-    gizmos_imported = True
-except ImportError as e:
-    gizmos_imported = False
-
-
-class PERSPECTIVE_OT_clear_transform(bpy.types.Operator):
-    """Clear perspective transform from selected strips"""
-    bl_idname = "sequencer.clear_perspective"
-    bl_label = "Clear Perspective"
-    bl_description = "Clear perspective transform from all selected strips"
-    bl_options = {'REGISTER', 'UNDO'}
-    
-    @classmethod
-    def poll(cls, context):
-        if not context.scene.sequence_editor:
-            return False
-        
-        # Check if any selected strips have transform capability
-        for strip in context.selected_sequences:
-            if hasattr(strip, 'transform'):
-                return True
-        return False
-    
-    def execute(self, context):
-        cleared_count = 0
-        
-        for strip in context.selected_sequences:
-            if hasattr(strip, 'transform'):
-                # Reset perspective transform (placeholder - will implement proper reset)
-                # For now, just reset basic transform values
-                if hasattr(strip.transform, 'offset_x'):
-                    strip.transform.offset_x = 0
-                    strip.transform.offset_y = 0
-                cleared_count += 1
-        
-        if cleared_count > 0:
-            self.report({'INFO'}, f"Cleared perspective from {cleared_count} strip(s)")
-        else:
-            self.report({'INFO'}, "No strips with transform found")
-        
-        return {'FINISHED'}
-
-
-class PERSPECTIVE_TOOL_perspective_handles(WorkSpaceTool):
-    bl_space_type = 'SEQUENCE_EDITOR'
-    bl_context_mode = 'PREVIEW'
-    
-    bl_idname = "sequencer.perspective_handles_tool"
-    bl_label = "Perspective"
-    bl_description = "Apply perspective transform using corner handle gizmos"
-    # Use pathlib for cross-platform compatibility (Blender 4.4+ extensions)
-    bl_icon = str(Path(__file__).parent / "icons" / "perspective")
-    bl_widget = "PERSPECTIVE_GGT_perspective_handles"
-    
-    # Keymap is handled by gizmos - no tool-level keymap needed
-    bl_keymap = None
-    
-    @staticmethod  
-    def draw_settings(context, layout, tool):
-        # Handles tool status display
-        seq_editor = context.scene.sequence_editor
-        if not seq_editor:
-            layout.label(text="No sequence editor")
-            return
-            
-        active_strip = seq_editor.active_strip
-        current_frame = context.scene.frame_current
-        
-        # Show current state
-        perspective_state = get_perspective_state()
-        if perspective_state['active']:
-            layout.label(text="Modal perspective mode active", icon='INFO')
-            layout.label(text="(Handles tool disabled)")
-        elif active_strip and hasattr(active_strip, 'transform'):
-            if is_strip_visible_at_frame(active_strip, current_frame):
-                layout.label(text=f"Ready: {active_strip.name}")
-                layout.label(text="Drag corner handles for perspective")
-                layout.label(text="Click center to start modal mode")
-            else:
-                layout.label(text="Strip not at current frame")
-        else:
-            layout.label(text="Select a transformable strip")
-
-
-# Menu functions
-def menu_func_strip_transform(self, context):
-    """Add Perspective Transform to Strip > Transform menu"""
-    if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
-        self.layout.operator_context = 'INVOKE_REGION_PREVIEW'
-        self.layout.operator("sequencer.perspective", text="Perspective")
-
-
-def menu_func_image_transform(self, context):
-    """Add Perspective Transform to Image > Transform menu"""
-    if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
-        self.layout.operator_context = 'INVOKE_REGION_PREVIEW'
-        self.layout.operator("sequencer.perspective", text="Perspective")
-
-
-def menu_func_image_clear(self, context):
-    """Add Clear Perspective to Image > Clear menu"""
-    if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
-        self.layout.operator("sequencer.clear_perspective", text="Perspective")
-
-
-# Registration
-classes = [
-    PERSPECTIVE_OT_transform,
-    PERSPECTIVE_OT_select_and_transform,
-    PERSPECTIVE_OT_activate_tool,
-    PERSPECTIVE_OT_clear_transform,
-]
+TOOL_IDNAME = "sequencer.perspective_handles_tool"
 
 addon_keymaps = []
 
 
+class PERSPECTIVE_TOOL_perspective_handles(WorkSpaceTool):
+    """Preview toolbar entry that shows the four corner handles."""
+
+    bl_space_type = 'SEQUENCE_EDITOR'
+    bl_context_mode = 'PREVIEW'
+
+    bl_idname = TOOL_IDNAME
+    bl_label = "Perspective"
+    bl_description = "Distort a strip by dragging its corner handles"
+    bl_icon = str(Path(__file__).parent / "icons" / "perspective")
+    bl_widget = "PERSPECTIVE_GGT_perspective_handles"
+    bl_keymap = None
+
+    @staticmethod
+    def draw_settings(context, layout, tool):
+        """Show what the tool will act on."""
+        from .operators import perspective_core as core
+        from .operators import perspective_nodes as nodes
+
+        strip = nodes.get_active_strip(context)
+        if strip is None or not hasattr(strip, "transform"):
+            layout.label(text="Select a transformable strip")
+            return
+
+        scene = nodes.get_sequencer_scene(context)
+        if not core.is_strip_visible_at_frame(strip, scene.frame_current):
+            layout.label(text="Strip is not visible at this frame")
+            return
+
+        layout.label(text=strip.name)
+        if nodes.has_perspective(strip):
+            layout.operator("sequencer.perspective_reset", text="Reset")
+        else:
+            layout.label(text="Drag a corner to begin")
+
+
+def _menu_transform(self, context):
+    """Add the tool to the preview Transform menus."""
+    if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
+        self.layout.operator("sequencer.perspective_activate", text="Perspective")
+
+
+def _menu_clear(self, context):
+    """Add the clear operator to the preview Clear menu."""
+    if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
+        self.layout.operator("sequencer.perspective_clear", text="Perspective")
+
+
+_MENUS = (
+    ("SEQUENCER_MT_strip_transform", _menu_transform),
+    ("SEQUENCER_MT_image_transform", _menu_transform),
+    ("SEQUENCER_MT_image_clear", _menu_clear),
+)
+
+
 def register():
-    """Register the addon"""
-    if not operators_imported:
-        return
-    
-    # Register classes
-    for cls in classes:
-        if cls is not None:
-            try:
-                bpy.utils.register_class(cls)
-            except Exception as e:
-                pass
-    
-    # Register gizmos
-    if gizmos_imported:
-        try:
-            register_perspective_handles_gizmo()
-        except Exception as e:
-            pass
-    
-    
-    # Register keymaps - only in Preview area
-    wm = bpy.context.window_manager
-    kc = wm.keyconfigs.addon
-    if kc:
-        # Preview region keymaps only
-        km = kc.keymaps.new(name="SequencerPreview", space_type="SEQUENCE_EDITOR", region_type="WINDOW")
-        
-        # Perspective operator - P key (modal for quick access, returns to previous tool)
-        kmi = km.keymap_items.new("sequencer.perspective", 'P', 'PRESS')
-        addon_keymaps.append((km, kmi))
-        
-        # Clear perspective operator - Alt+P key
-        kmi_clear = km.keymap_items.new("sequencer.clear_perspective", 'P', 'PRESS', alt=True)
-        addon_keymaps.append((km, kmi_clear))
-    
-    # Register the tools - only the gizmo handles tool
-    try:
-        bpy.utils.register_tool(PERSPECTIVE_TOOL_perspective_handles, after={"builtin.transform"}, separator=False)
-    except Exception as e:
-        pass
-        try:
-            bpy.utils.register_tool(PERSPECTIVE_TOOL_perspective_handles)
-        except Exception as e2:
-            pass
-    
-    # Add menu items
-    try:
-        bpy.types.SEQUENCER_MT_strip_transform.append(menu_func_strip_transform)
-        bpy.types.SEQUENCER_MT_image_transform.append(menu_func_image_transform)
-        bpy.types.SEQUENCER_MT_image_clear.append(menu_func_image_clear)
-    except Exception as e:
-        pass
+    """Register operators, gizmos, the toolbar tool and keymaps."""
+    for cls in operator_classes:
+        bpy.utils.register_class(cls)
+
+    register_perspective_handles_gizmo()
+
+    keyconfig = bpy.context.window_manager.keyconfigs.addon
+    if keyconfig:
+        keymap = keyconfig.keymaps.new(name="SequencerPreview",
+                                       space_type="SEQUENCE_EDITOR",
+                                       region_type="WINDOW")
+        addon_keymaps.append(
+            (keymap, keymap.keymap_items.new("sequencer.perspective_activate", 'P', 'PRESS')))
+        addon_keymaps.append(
+            (keymap, keymap.keymap_items.new("sequencer.perspective_clear", 'P', 'PRESS', alt=True)))
+
+    bpy.utils.register_tool(PERSPECTIVE_TOOL_perspective_handles,
+                            after={"builtin.transform"}, separator=False)
+
+    for menu_name, func in _MENUS:
+        menu = getattr(bpy.types, menu_name, None)
+        if menu is not None:
+            menu.append(func)
 
 
 def unregister():
-    """Unregister the addon"""
-    # Force cleanup of any active perspective mode
-    try:
-        clear_perspective_state()
-    except:
-        pass
-    
-    # Force restore gizmos in case they were disabled
-    try:
-        for area in bpy.context.screen.areas:
-            if area.type == 'SEQUENCE_EDITOR':
-                for space in area.spaces:
-                    if space.type == 'SEQUENCE_EDITOR' and hasattr(space, 'show_gizmo'):
-                        space.show_gizmo = True
-    except:
-        pass
-    
-    
-    # Unregister gizmos
-    if gizmos_imported:
-        try:
-            unregister_perspective_handles_gizmo()
-        except Exception as e:
-            pass
-    
-    # Remove menu items
-    try:
-        bpy.types.SEQUENCER_MT_strip_transform.remove(menu_func_strip_transform)
-        bpy.types.SEQUENCER_MT_image_transform.remove(menu_func_image_transform)
-        bpy.types.SEQUENCER_MT_image_clear.remove(menu_func_image_clear)
-    except:
-        pass
-    
-    # Unregister the tools
-    try:
-        bpy.utils.unregister_tool(PERSPECTIVE_TOOL_perspective_handles)
-    except:
-        pass
-    
-    # Clean up draw handlers
-    try:
-        from .operators.perspective_core import get_draw_handle, clear_all_perspective_gpu_rendering
-        if get_draw_handle() is not None:
-            bpy.types.SpaceSequenceEditor.draw_handler_remove(get_draw_handle(), 'PREVIEW')
-        # Clean up GPU perspective rendering
-        clear_all_perspective_gpu_rendering()
-    except:
-        pass
-    
-    # Remove keymaps
-    for km, kmi in addon_keymaps:
-        km.keymap_items.remove(kmi)
+    """Undo everything register() did, in reverse order."""
+    for menu_name, func in reversed(_MENUS):
+        menu = getattr(bpy.types, menu_name, None)
+        if menu is not None:
+            menu.remove(func)
+
+    bpy.utils.unregister_tool(PERSPECTIVE_TOOL_perspective_handles)
+
+    for keymap, item in addon_keymaps:
+        keymap.keymap_items.remove(item)
     addon_keymaps.clear()
-    
-    # Unregister classes
-    for cls in reversed(classes):
-        if cls is not None:
-            try:
-                bpy.utils.unregister_class(cls)
-            except:
-                pass
 
+    unregister_perspective_handles_gizmo()
 
-if __name__ == "__main__":
-    register()
+    for cls in reversed(operator_classes):
+        bpy.utils.unregister_class(cls)
