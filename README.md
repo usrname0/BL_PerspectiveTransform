@@ -8,7 +8,7 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 
 ![Dragging a corner handle in the VSE preview](./examples/demo.gif)
 
-Corners can be dragged anywhere within the strip's original geometry, which can
+Corners can be dragged anywhere within the strip's geometry, which can
 be scaled out of bounds, rotated, cropped, etc. as usual.
 
 ![An extreme corner-pin with headroom added](./examples/demo_complex.png)
