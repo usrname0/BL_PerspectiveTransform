@@ -351,6 +351,9 @@ def clear(strip, scene):
         return False
 
     group = modifier.node_group
+    anim_data = getattr(group, "animation_data", None) if group else None
+    action = getattr(anim_data, "action", None) if anim_data else None
+
     with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
         strip.modifiers.remove(modifier)
 
@@ -360,4 +363,8 @@ def clear(strip, scene):
     # every clear.
     if group is not None and count_group_users(group) == 0:
         bpy.data.node_groups.remove(group)
+        # The node group was the action's only user, so without this the keys
+        # linger as an orphan datablock until the next save-and-reload.
+        if action is not None and action.users == 0:
+            bpy.data.actions.remove(action)
     return True

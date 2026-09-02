@@ -146,19 +146,32 @@ def add_compositor_modifier(strip, scene, node_group):
     return modifier
 
 
-def render_scene(scene, tag):
+def render_scene(scene, tag, frame=None):
     """
-    Render frame 1 of scene and return the result as an (h, w, 4) float array.
+    Render one frame of scene and return the result as an (h, w, 4) float array.
 
     Row 0 of the array is the bottom of the image, matching Blender's own
     bottom-left pixel origin.
+
+    Args:
+        scene: the scene to render
+        tag: filename prefix for the rendered PNG
+        frame: frame to render, or None to render whatever range the scene is
+            already set to. Passing a frame is what the animation tests need,
+            since a keyed pin only differs from frame to frame.
     """
+    if frame is not None:
+        scene.frame_start = scene.frame_end = frame
+        scene.frame_set(frame)
+
     out_dir = scratch_dir()
     scene.render.filepath = os.path.join(out_dir, tag + "_")
     with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
         bpy.ops.render.render(animation=True, scene=scene.name)
 
-    path = os.path.join(out_dir, tag + "_0001.png")
+    # Named from frame_start rather than hardcoded to 0001, so a scene set to
+    # any single frame reads back the file it actually wrote.
+    path = os.path.join(out_dir, "{}_{:04d}.png".format(tag, scene.frame_start))
     image = bpy.data.images.load(path)
     buffer = np.zeros(len(image.pixels), dtype=np.float32)
     image.pixels.foreach_get(buffer)
@@ -212,3 +225,26 @@ def import_addon_module(module_name):
         sys.path.insert(0, root)
     import importlib
     return importlib.import_module(module_name)
+
+
+def import_addon_package_module(module_name):
+    """
+    Import an addon module through the real package name.
+
+    import_addon_module() puts the repo root on sys.path, so submodules import
+    as top-level packages. That is enough for the operators, but anything using
+    a package-relative `..` import fails with "attempted relative import beyond
+    top-level package" - the gizmos import `..operators` and do exactly that.
+    This puts the repo's *parent* on sys.path instead and imports through the
+    package, so those resolve.
+
+    Args:
+        module_name: path below the addon root, e.g.
+            "gizmos.perspective_handles_gizmo"
+    """
+    root = repo_root()
+    parent = os.path.dirname(root)
+    if parent not in sys.path:
+        sys.path.insert(0, parent)
+    import importlib
+    return importlib.import_module("{}.{}".format(os.path.basename(root), module_name))

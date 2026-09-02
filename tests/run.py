@@ -16,7 +16,7 @@ import os
 import sys
 import traceback
 
-SUITES = ("test_addon", "test_space", "test_render", "test_nodes")
+SUITES = ("test_addon", "test_space", "test_render", "test_nodes", "test_anim")
 
 
 def main():

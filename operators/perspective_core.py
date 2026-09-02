@@ -6,6 +6,7 @@ corner positions between frame space and pin space, and the headroom operation
 that makes room for corners beyond the image edge.
 """
 
+from . import perspective_anim as anim
 from . import perspective_nodes as nodes
 from . import perspective_space as space
 
@@ -89,6 +90,12 @@ def add_headroom(strip, scene, factor=2.0):
     enlarges that rectangle while this remaps the pin so nothing appears to
     move, leaving margin on all sides to drag into.
 
+    A keyframed corner is driven by its fcurve, not by the socket value, so
+    rewriting the socket alone would let the animation snap the corner back on
+    the next frame change while the strip stayed scaled - the image visibly
+    jumps. The stored key values are remapped as well, which holds the whole
+    animation still rather than just the current frame.
+
     Args:
         strip: the strip to modify
         scene: the sequencer scene
@@ -97,9 +104,16 @@ def add_headroom(strip, scene, factor=2.0):
     Returns:
         bool: True if applied. False if the change is impossible without
         distorting the image, which happens when shrinking past the point
-        where the current corners still fit inside the image rectangle.
+        where the current corners - or any of their keyframes - would no
+        longer fit inside the image rectangle.
     """
     if factor <= 0.0 or not hasattr(strip, "transform"):
+        return False
+
+    # The pin-space remap is a uniform scale about the transform origin, so the
+    # keyframes can be tested and moved without going through the matrices.
+    origin = tuple(strip.transform.origin)
+    if not anim.keys_fit_after_remap(strip, origin, factor):
         return False
 
     old_matrix = space.pin_to_frame_matrix(strip, scene)
@@ -122,4 +136,5 @@ def add_headroom(strip, scene, factor=2.0):
             return False
 
     nodes.write_pin(strip, scene, new_corners)
+    anim.remap_corner_keys(strip, origin, factor)
     return True

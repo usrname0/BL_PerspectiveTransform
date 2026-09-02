@@ -19,6 +19,7 @@ from bpy.types import Gizmo, GizmoGroup
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
+from ..operators import perspective_anim as anim
 from ..operators import perspective_nodes as nodes
 from ..operators import perspective_space as space
 from ..operators.perspective_core import is_strip_visible_at_frame
@@ -152,11 +153,14 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         if event.type == 'MOUSEMOVE':
             self._drag_to(context, event.mouse_region_x, event.mouse_region_y)
             return {'RUNNING_MODAL'}
+        # The end-of-drag work is deliberately NOT done here. Blender's gizmo
+        # tweak operator converts the confirming mouse release through its own
+        # modal keymap, so this branch is not reliably reached; exit() is the
+        # hook Blender always calls when the modal ends. Returning FINISHED
+        # here still routes through exit(cancel=False), so both paths agree.
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            bpy.ops.ed.undo_push(message="Perspective Corner")
             return {'FINISHED'}
         if event.type in {'ESC', 'RIGHTMOUSE'}:
-            self._restore(context)
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
 
@@ -170,6 +174,33 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                            space.apply(self._drag_matrix, frame_point))
         _invalidate(nodes.get_active_strip(context))
 
+    def _finish_edit(self, context):
+        """
+        Do the end-of-drag work: auto-key, then push undo.
+
+        Writing a socket through RNA never triggers Blender's auto-key, so the
+        drag has to ask for it explicitly. All four corners are keyed together
+        - see perspective_anim.autokey_pin for why.
+
+        Called from exit(), not from modal(). Blender's gizmo tweak operator
+        matches the confirming mouse release against its own modal keymap and
+        finishes the modal itself, so Gizmo.modal() cannot be relied on to see
+        a raw LEFTMOUSE/RELEASE. exit() is called either way.
+        """
+        strip = nodes.get_active_strip(context)
+        scene = nodes.get_sequencer_scene(context)
+        if strip is None or scene is None:
+            return
+
+        # A click that moved nothing should leave no keyframe and no undo step.
+        if anim.pin_matches(strip, self._pin_on_invoke):
+            return
+
+        # Read the flag from the context, not the sequencer scene: the auto-key
+        # toggle writes to the window scene, and 5.0 decoupled the two.
+        anim.autokey_pin(strip, scene, getattr(context, "tool_settings", None))
+        bpy.ops.ed.undo_push(message="Perspective Corner")
+
     def _restore(self, context):
         """Put the pin back to where it was when the drag started."""
         if self._pin_on_invoke is None or self._edit_node is None:
@@ -179,9 +210,22 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         _invalidate(nodes.get_active_strip(context))
 
     def exit(self, context, cancel):
-        """Return the cursor to the handle after a grab-cursor drag."""
+        """
+        Close out the drag: restore or commit, then put the cursor back.
+
+        This is the only end-of-drag hook Blender guarantees to call, so both
+        the cancel path and the confirm path are driven from here rather than
+        from modal(). Both are safe to run twice, in case modal() did reach its
+        own branch first.
+        """
+        if cancel:
+            self._restore(context)
+        else:
+            self._finish_edit(context)
+
         self._edit_node = None
         self._drag_matrix = None
+        self._pin_on_invoke = None
 
         region = context.region
         if cancel or region is None:

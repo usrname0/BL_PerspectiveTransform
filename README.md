@@ -20,6 +20,23 @@ renders.
 Because the transform lives in a node group on the strip, it survives save and
 load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
 
+## Animating a corner
+
+Corners animate the way the rest of Blender does.
+
+- Turn on **auto-keying** and drag a handle. All four corners are keyed at the
+  current frame, so move to another frame, drag again, and it interpolates.
+- Or key by hand: click the dot beside any corner in the Perspective panel.
+- The keys appear in the **Dope Sheet** under your scene, in a channel named
+  after the strip, and retime like any other animation.
+
+Turning auto-keying on matters. Once a corner is keyframed it is driven by its
+curve, so dragging it without auto-keying looks like it worked and then reverts
+on the next frame change - the panel says so when that is the situation.
+
+**Reset** clears the corner animation along with the shape. **Add Headroom**
+moves every keyframe with it, so an animated transform stays put.
+
 ![Text and other visual strips work too](./examples/demo_texttoo.png)
 
 ## Compatibility
@@ -35,8 +52,9 @@ load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
 2. Activate the Perspective tool from the toolbar, or press "P"
 3. Drag any of the four corner handles
 
-The Perspective tab in the preview sidebar (N) shows numeric corner values, an
-interpolation setting, and Reset / Clear buttons.
+Numeric corner values, an interpolation setting and Reset / Clear buttons appear
+in two places: the **Perspective** tab of the preview sidebar (N), and the
+**Strip** tab of the Properties editor alongside Transform and Crop.
 
 ### Dragging corners outward
 
