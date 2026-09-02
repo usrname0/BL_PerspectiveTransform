@@ -264,11 +264,52 @@ def write_pin(strip, scene, corners):
 
     written = []
     for socket_name, corner in zip(CORNER_SOCKETS, corners):
-        value = Vector((min(max(float(corner[0]), 0.0), 1.0),
-                        min(max(float(corner[1]), 0.0), 1.0)))
+        value = clamp_corner(corner)
         node.inputs[socket_name].default_value = value
         written.append(value)
     return written
+
+
+def clamp_corner(corner):
+    """Clamp a corner to the unit square the Corner Pin node accepts."""
+    return Vector((min(max(float(corner[0]), 0.0), 1.0),
+                   min(max(float(corner[1]), 0.0), 1.0)))
+
+
+def prepare_for_edit(strip, scene):
+    """
+    Return the strip's Corner Pin node, ready for direct socket writes.
+
+    Creating the modifier and un-sharing the node group both walk every strip in
+    the file, which is far too slow to repeat on every mouse-move. Call this
+    once at the start of a drag and write through write_corner() afterwards.
+
+    Args:
+        strip: the strip being edited
+        scene: the sequencer scene owning the strip
+
+    Returns:
+        bpy.types.Node: the Corner Pin node, or None if it could not be built
+    """
+    modifier = ensure_modifier(strip, scene)
+    return get_corner_pin_node(ensure_single_user(modifier))
+
+
+def write_corner(node, index, corner):
+    """
+    Write a single clamped corner to a Corner Pin node obtained earlier.
+
+    Args:
+        node: the Corner Pin node from prepare_for_edit()
+        index: corner index in CORNER_SOCKETS order
+        corner: the (u, v) pin-space position
+
+    Returns:
+        mathutils.Vector: the clamped value actually written
+    """
+    value = clamp_corner(corner)
+    node.inputs[CORNER_SOCKETS[index]].default_value = value
+    return value
 
 
 def is_identity(corners, tolerance=1e-5):

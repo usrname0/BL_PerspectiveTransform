@@ -151,6 +151,44 @@ def check_headroom_preserves_render(source, failures):
             f"headroom changed the rendered silhouette by {disagree} px")
 
 
+def check_simulated_drag(source, failures):
+    """
+    Exercise the exact path a corner drag takes, and check where it lands.
+
+    The gizmo converts a cursor position to frame space, maps it through
+    frame_to_pin_matrix, and writes one socket via write_corner. Doing the same
+    here and then measuring the render verifies the whole chain at once, which
+    is the closest a headless test can get to dragging a handle.
+    """
+    space = import_addon_module("operators.perspective_space")
+
+    scene = make_scene("render_drag")
+    strip = add_image_strip(scene, source)
+
+    node = nodes.prepare_for_edit(strip, scene)
+    if node is None:
+        failures.append("prepare_for_edit returned no Corner Pin node")
+        return
+
+    # Drag the top-left corner to the middle of the frame's top edge.
+    target = (256.0, 512.0)
+    matrix = space.frame_to_pin_matrix(strip, scene)
+    top_left_index = nodes.CORNER_SOCKETS.index("Upper Left")
+    nodes.write_corner(node, top_left_index, space.apply(matrix, target))
+
+    pixels = render_scene(scene, "render_drag")
+    top = row_span(pixels, pixels.shape[0] - 3)
+    if top is None:
+        failures.append("simulated drag: nothing rendered on the top row")
+        return
+    if abs(top[0] - 256) > 3:
+        failures.append(
+            f"simulated drag: top edge starts at x={top[0]}, expected 256 "
+            f"(the corner was dragged to {target})")
+    if abs(top[1] - 511) > 3:
+        failures.append(f"simulated drag: top edge ends at x={top[1]}, expected 511")
+
+
 def run():
     """Run the render suite and return a list of failure strings."""
     failures = []
@@ -159,6 +197,7 @@ def run():
     check_identity_renders_clean(source, failures)
     check_image_strip(source, failures)
     check_perspective_correct(source, failures)
+    check_simulated_drag(source, failures)
     check_headroom_preserves_render(source, failures)
     check_movie_strip(make_movie(source, failures), failures)
     return failures

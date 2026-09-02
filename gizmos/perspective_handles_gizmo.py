@@ -88,8 +88,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self.hide = False
         self.scale_basis = HANDLE_RADIUS
         self.select_id = 0
-        # Pin values captured on invoke, so a cancelled drag can be undone.
+        # Captured on invoke so a drag does no datablock bookkeeping per event.
         self._pin_on_invoke = None
+        self._edit_node = None
+        self._drag_matrix = None
 
     def draw_prepare(self, context):
         """Keep the handle visible regardless of gizmo group state."""
@@ -131,9 +133,21 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         return -1
 
     def invoke(self, context, event):
-        """Capture the pin state so the drag can be cancelled."""
+        """
+        Prepare everything the drag needs, once.
+
+        Creating the modifier, un-sharing the node group and composing the
+        coordinate matrix all cost more than a mouse-move can afford, and none
+        of them change while a single corner is being dragged.
+        """
+        scene = nodes.get_sequencer_scene(context)
         strip = nodes.get_active_strip(context)
-        self._pin_on_invoke = nodes.read_pin(strip) if strip else None
+        if strip is None:
+            return {'CANCELLED'}
+
+        self._pin_on_invoke = nodes.read_pin(strip)
+        self._edit_node = nodes.prepare_for_edit(strip, scene)
+        self._drag_matrix = space.frame_to_pin_matrix(strip, scene)
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event, tweak):
@@ -151,34 +165,29 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
 
     def _drag_to(self, context, region_x, region_y):
         """Write the cursor position into this corner's pin socket."""
-        scene = nodes.get_sequencer_scene(context)
-        strip = nodes.get_active_strip(context)
-        if strip is None or context.region is None:
+        if self._edit_node is None or context.region is None:
             return
-
-        view2d = context.region.view2d
-        frame_point = _region_to_frame(view2d, scene, region_x, region_y)
-        pin_point = space.apply(space.frame_to_pin_matrix(strip, scene), frame_point)
-
-        corners = nodes.read_pin(strip)
-        corners[self.handle_index] = pin_point
-        nodes.write_pin(strip, scene, corners)
-        _invalidate(strip)
+        scene = nodes.get_sequencer_scene(context)
+        frame_point = _region_to_frame(context.region.view2d, scene, region_x, region_y)
+        nodes.write_corner(self._edit_node, self.handle_index,
+                           space.apply(self._drag_matrix, frame_point))
+        _invalidate(nodes.get_active_strip(context))
 
     def _restore(self, context):
         """Put the pin back to where it was when the drag started."""
-        if self._pin_on_invoke is None:
+        if self._pin_on_invoke is None or self._edit_node is None:
             return
-        scene = nodes.get_sequencer_scene(context)
-        strip = nodes.get_active_strip(context)
-        if strip is not None:
-            nodes.write_pin(strip, scene, self._pin_on_invoke)
-            _invalidate(strip)
+        for index, corner in enumerate(self._pin_on_invoke):
+            nodes.write_corner(self._edit_node, index, corner)
+        _invalidate(nodes.get_active_strip(context))
 
     def exit(self, context, cancel):
         """Return the cursor to the handle after a grab-cursor drag."""
+        self._edit_node = None
+        self._drag_matrix = None
+
         region = context.region
-        if region is None:
+        if cancel or region is None:
             return
         centre = self.matrix_basis.translation
         target_x = int(region.x + centre.x)
@@ -204,6 +213,8 @@ def _invalidate(strip):
     Changing a node socket does not by itself tell the VSE that its cached
     composite is stale, so without this the preview lags a drag by one edit.
     """
+    if strip is None:
+        return
     try:
         strip.invalidate_cache('COMPOSITE')
     except (AttributeError, TypeError, RuntimeError):
