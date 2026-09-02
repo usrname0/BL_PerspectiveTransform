@@ -29,12 +29,12 @@ license = ["SPDX:GPL-3.0-or-later"]
 # Description - must be clear about all functionality
 description = """A corner-pin perspective transform for Blender's Video Sequence Editor.
 
-Drag the four corners of a strip in the preview to distort it, and have the distortion render.
+Drag the four corners of a strip in the preview to distort it. The result will render accordingly.
 
 Features:
 - Four draggable corner handles in the VSE preview
-- Renders as part of Blender's normal strip pipeline, not a preview-only overlay
-- Works with IMAGE and MOVIE strips
+- Renders as part of Blender's normal strip pipeline
+- Works with any visual strip: image, movie, text, color, scene, etc.
 - Correct alongside the strip's own scale, rotation, mirror and crop
 - Every corner can be keyframed
 - Select the tool via toolbar, menu or shortcut (default "P")
@@ -44,8 +44,7 @@ Stores the transform as a Corner Pin node in a compositor strip modifier, so it 
 
 # Copyright notices
 copyright = [
-    "2025 usrname0",
-    "2007 Original VSE Transform Tools by kgeogeo, DoubleZ, doakey3, NathanLovato",
+    "2026 usrname0",
 ]
 
 # Build configuration

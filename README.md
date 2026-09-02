@@ -24,7 +24,7 @@ load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
 
 - **Blender 5.0 or newer.** Compositor strip modifiers, which this depends on,
   were added in 5.0. Developed and tested against 5.1.2.
-- IMAGE and MOVIE strips
+- Works with any visual strip: image, movie, text, color, scene, etc.
 - Works alongside the strip's own scale, rotation, mirror and crop
 
 ## Usage
