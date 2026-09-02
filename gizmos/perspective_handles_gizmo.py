@@ -94,6 +94,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self._pin_on_invoke = None
         self._edit_node = None
         self._drag_matrix = None
+        # The drag's own running state: where the four corners stand right now,
+        # and the cursor position the next delta is measured from.
+        self._pin_corners = None
+        self._last_mouse = None
 
     def draw_prepare(self, context):
         """Keep the handle visible regardless of gizmo group state."""
@@ -137,6 +141,12 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         Creating the modifier, un-sharing the node group and composing the
         coordinate matrix all cost more than a mouse-move can afford, and none
         of them change while a single corner is being dragged.
+
+        The cursor position is captured too, because the drag moves the corner
+        by how far the cursor has travelled rather than to where it points -
+        see _drag_to. One consequence is worth knowing: the handle no longer
+        jumps under the cursor when it is grabbed from up to SELECT_RADIUS
+        away, it moves relative to where it already was.
         """
         scene = nodes.get_sequencer_scene(context)
         strip = nodes.get_active_strip(context)
@@ -144,8 +154,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             return {'CANCELLED'}
 
         self._pin_on_invoke = nodes.read_pin(strip)
+        self._pin_corners = list(self._pin_on_invoke)
         self._edit_node = nodes.prepare_for_edit(strip, scene)
         self._drag_matrix = space.frame_to_pin_matrix(strip, scene)
+        self._last_mouse = (event.mouse_region_x, event.mouse_region_y)
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event, tweak):
@@ -164,32 +176,73 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
 
+    def _accept_corner(self, corner):
+        """
+        Return the corner clamped to the image, or None if it breaks the quad.
+
+        Only this corner moves during a drag, so the other three are whatever
+        they were on invoke, and the convexity test can be run against the
+        working copy without re-reading the sockets.
+        """
+        corner = nodes.clamp_corner(corner)
+        candidate = list(self._pin_corners)
+        candidate[self.handle_index] = corner
+        return corner if space.is_convex_quad(candidate) else None
+
     def _drag_to(self, context, region_x, region_y):
         """
-        Write the cursor position into this corner's pin socket.
+        Move this corner by however far the cursor travelled since the last event.
 
-        A move that would make the quad concave, self-intersecting or
-        degenerate is refused outright rather than written: the Corner Pin
-        solver cannot express such a quad and renders a blank or garbage frame
-        instead of failing, with no way for the user to tell what went wrong.
-        Refusing leaves the handle at the last good position, so it stops at
-        the boundary and picks the cursor up again on the way back - the same
-        way the unit-square clamp already stops it at the image edge.
+        The corner is *not* placed where the cursor points, and that is the
+        whole point. A move that would make the quad concave, self-intersecting
+        or degenerate has to be turned down - the Corner Pin solver cannot
+        express such a quad and renders a blank or garbage frame instead of
+        failing - but turning down an absolute position means the cursor keeps
+        travelling while the corner sits still, and every pixel of that
+        invisible travel has to be dragged back before the corner moves again.
+        The handle feels stuck to a wall that is not there.
+
+        Accumulating deltas onto the last accepted position removes that
+        entirely: the corner stops at the boundary, and the very first mouse
+        move back off it moves the corner again. Where the quad is not
+        constrained this is identical to following the cursor, because the
+        deltas simply sum to the cursor's travel. The cost is that after being
+        held at a boundary the handle sits offset from the cursor; exit()
+        already warps the cursor back onto the handle when the drag ends.
+
+        A move refused outright is then tried one axis at a time, so a drag
+        running along the boundary keeps making the progress it can instead of
+        stopping dead the moment any part of it is disallowed.
+
+        This relies on event.mouse_region_x staying continuous under
+        use_grab_cursor, which it does - the absolute positions this used to
+        read would have jumped at every cursor wrap otherwise.
         """
-        if self._edit_node is None or context.region is None:
+        if self._edit_node is None or context.region is None or self._last_mouse is None:
             return
         scene = nodes.get_sequencer_scene(context)
-        frame_point = _region_to_frame(context.region.view2d, scene, region_x, region_y)
-        corner = nodes.clamp_corner(space.apply(self._drag_matrix, frame_point))
+        view2d = context.region.view2d
 
-        # Only this corner moves during a drag, so the other three are still
-        # whatever they were on invoke.
-        candidate = list(self._pin_on_invoke)
-        candidate[self.handle_index] = corner
-        if not space.is_convex_quad(candidate):
+        previous = space.apply(self._drag_matrix,
+                               _region_to_frame(view2d, scene, *self._last_mouse))
+        current = space.apply(self._drag_matrix,
+                              _region_to_frame(view2d, scene, region_x, region_y))
+        self._last_mouse = (region_x, region_y)
+
+        here = self._pin_corners[self.handle_index]
+        target = Vector((here.x + current.x - previous.x,
+                         here.y + current.y - previous.y))
+
+        accepted = self._accept_corner(target)
+        if accepted is None:
+            accepted = self._accept_corner(Vector((target.x, here.y)))
+        if accepted is None:
+            accepted = self._accept_corner(Vector((here.x, target.y)))
+        if accepted is None:
             return
 
-        nodes.write_corner(self._edit_node, self.handle_index, corner)
+        self._pin_corners[self.handle_index] = accepted
+        nodes.write_corner(self._edit_node, self.handle_index, accepted)
         _invalidate(nodes.get_active_strip(context))
 
     def _finish_edit(self, context):
@@ -245,6 +298,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self._edit_node = None
         self._drag_matrix = None
         self._pin_on_invoke = None
+        self._pin_corners = None
+        self._last_mouse = None
 
         region = context.region
         if cancel or region is None:

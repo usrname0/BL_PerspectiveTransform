@@ -12,8 +12,8 @@ Corners can be dragged anywhere within the strip's geometry, which can
 be scaled out of bounds, rotated, cropped, etc. as usual.
 
 A corner will not drag into a shape the perspective cannot be solved for - pull
-one past its neighbours and the handle simply stops rather than letting the
-strip render blank.
+one past its neighbours and the handle stops at the limit rather than letting
+the strip render blank. Drag back and it picks up again straight away.
 
 ![An extreme corner-pin with headroom added](./examples/demo_complex.png)
 

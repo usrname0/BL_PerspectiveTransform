@@ -65,14 +65,26 @@ def _setup(name, res=512):
     return scene, strip
 
 
-def _drag_handle(gizmo_module, nodes, space, scene, strip, index, pin_target):
+def _region_of(scene, pin_point):
     """
-    Run the gizmo's real drag step, aiming a corner at a pin-space point.
+    Return the region coordinates the cursor sits at for a pin-space point.
 
     The strip is untransformed and its source fills the frame, so frame space
-    is pin space times the resolution, and _region_to_frame's half-resolution
-    shift is undone here to pick the region coordinates that land on the point
-    the caller asked for.
+    is pin space times the resolution; this also undoes _region_to_frame's
+    half-resolution shift, so the gizmo maps it straight back.
+    """
+    return (pin_point[0] * scene.render.resolution_x - scene.render.resolution_x * 0.5,
+            pin_point[1] * scene.render.resolution_y - scene.render.resolution_y * 0.5)
+
+
+def _begin_drag(gizmo_module, nodes, space, scene, strip, index):
+    """
+    Set up a stand-in gizmo the way invoke() does, ready to be dragged.
+
+    The drag moves the corner by cursor *travel*, so a single call proves
+    nothing on its own - the tests here move the cursor through a sequence of
+    positions and watch what the corner does, which is the only way the
+    stop-and-resume behaviour is visible at all.
     """
     handle = gizmo_module.PERSPECTIVE_GT_perspective_handle
 
@@ -80,15 +92,21 @@ def _drag_handle(gizmo_module, nodes, space, scene, strip, index, pin_target):
         pass
 
     _Stub._drag_to = handle._drag_to
+    _Stub._accept_corner = handle._accept_corner
     stub = _Stub()
     stub.handle_index = index
     stub._pin_on_invoke = nodes.read_pin(strip)
+    stub._pin_corners = list(stub._pin_on_invoke)
     stub._edit_node = nodes.prepare_for_edit(strip, scene)
     stub._drag_matrix = space.frame_to_pin_matrix(strip, scene)
+    # A real grab starts with the cursor on the handle.
+    stub._last_mouse = _region_of(scene, stub._pin_corners[index])
+    return stub
 
-    region_x = pin_target[0] * scene.render.resolution_x - scene.render.resolution_x * 0.5
-    region_y = pin_target[1] * scene.render.resolution_y - scene.render.resolution_y * 0.5
-    stub._drag_to(_FakeContext(scene), region_x, region_y)
+
+def _move_cursor_to(stub, nodes, scene, strip, pin_point):
+    """Move the cursor to a pin-space point and return where the corners ended up."""
+    stub._drag_to(_FakeContext(scene), *_region_of(scene, pin_point))
     return [tuple(round(float(v), 4) for v in c) for c in nodes.read_pin(strip)]
 
 
@@ -153,25 +171,86 @@ def test_drag_refuses_to_enter_a_concave_shape():
     scene, strip = _setup("convex_drag")
     failures = []
 
-    identity = [tuple(float(v) for v in c) for c in nodes.IDENTITY_PIN]
+    stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
 
-    # Corner 2 is the top right. Pulling it to (0.35, 0.35) puts it across the
-    # diagonal between its neighbours, which is the concave case.
-    after = _drag_handle(gizmo_module, nodes, space, scene, strip, 2, (0.35, 0.35))
-    if after != identity:
-        failures.append(f"a concave drag was written anyway, pin is now {after}")
-
-    # The same handle must still move where the quad stays convex, or the
-    # guard has simply frozen it.
-    after = _drag_handle(gizmo_module, nodes, space, scene, strip, 2, (0.7, 0.7))
+    # Corner 2 is the top right. A valid move first, so the refusal that
+    # follows is measured against a corner that had been moving.
+    after = _move_cursor_to(stub, nodes, scene, strip, (0.7, 0.7))
     if after[2] != (0.7, 0.7):
         failures.append(f"a convex drag was refused, corner 2 is {after[2]}")
 
-    # And having stopped, it has to pick the cursor up again on the way back:
-    # the guard tests each candidate against the corners as they now stand.
-    after = _drag_handle(gizmo_module, nodes, space, scene, strip, 2, (0.9, 0.9))
-    if after[2] != (0.9, 0.9):
-        failures.append(f"the handle did not resume after a refusal, corner 2 is {after[2]}")
+    # Pulling it to (0.2, 0.2) puts it across the diagonal between its
+    # neighbours, which is the concave case, and must not be written.
+    after = _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
+    if after[2] != (0.7, 0.7):
+        failures.append(f"a concave drag was written anyway, corner 2 is {after[2]}")
+
+    return failures
+
+
+def test_the_handle_moves_again_the_moment_the_drag_reverses():
+    """
+    Coming back off the boundary must move the corner on the very first event.
+
+    This is the bug that shipped with the guard's first version. Refusing an
+    *absolute* cursor position leaves the corner still while the cursor carries
+    on into the disallowed region, and since nothing on screen moved, the user
+    has no idea how far in they went - they then have to drag all of it back
+    before anything happens. It reads as having invisibly dragged yourself into
+    a hole. Accumulating travel onto the last accepted position is what fixes
+    it, and this test is the reason to keep doing that.
+    """
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    gizmo_module = H.import_addon_package_module("gizmos.perspective_handles_gizmo")
+    scene, strip = _setup("convex_reverse")
+    failures = []
+
+    stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
+    _move_cursor_to(stub, nodes, scene, strip, (0.7, 0.7))
+
+    # Well past the boundary: under absolute placement this is where the
+    # invisible travel would pile up.
+    held = _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
+    if held[2] != (0.7, 0.7):
+        failures.append(f"the corner should be held at (0.7, 0.7), it is {held[2]}")
+
+    # Now reverse by a hair. The cursor is still deep inside the disallowed
+    # region, so an absolute reading would refuse this too and the corner would
+    # sit there for another 0.5 of travel.
+    after = _move_cursor_to(stub, nodes, scene, strip, (0.25, 0.25))
+    if after[2] != (0.75, 0.75):
+        failures.append(
+            f"reversing the drag did not move the corner immediately: {after[2]}, "
+            "expected (0.75, 0.75)")
+
+    return failures
+
+
+def test_a_drag_along_the_boundary_keeps_moving():
+    """
+    A move refused whole must still be tried one axis at a time.
+
+    Without this, a drag running at a shallow angle into the boundary is
+    refused on every single event - the user is mostly moving parallel to it,
+    and the handle stops dead anyway.
+    """
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    gizmo_module = H.import_addon_package_module("gizmos.perspective_handles_gizmo")
+    scene, strip = _setup("convex_slide")
+    failures = []
+
+    stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
+    _move_cursor_to(stub, nodes, scene, strip, (0.6, 0.6))
+
+    # Mostly leftwards, slightly up. The whole move crosses the boundary and so
+    # does the x half of it, but the y half does not, so the corner should
+    # travel up rather than stop.
+    after = _move_cursor_to(stub, nodes, scene, strip, (0.1, 0.7))
+    if after[2] != (0.6, 0.7):
+        failures.append(
+            f"a shallow drag along the boundary gave {after[2]}, expected (0.6, 0.7)")
 
     return failures
 
@@ -195,13 +274,14 @@ def test_a_refused_drag_renders_the_shape_it_stopped_at():
     scene, strip = _setup("convex_render")
     failures = []
 
-    _drag_handle(gizmo_module, nodes, space, scene, strip, 2, (0.7, 0.7))
+    stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
+    _move_cursor_to(stub, nodes, scene, strip, (0.7, 0.7))
     good = H.render_scene(scene, "convex_good", frame=1)
     coverage = float((good[..., 3] > 0.5).mean())
     if not 0.6 < coverage < 0.8:
         failures.append(f"the valid pin should cover about 70% of the frame, got {coverage:.3f}")
 
-    _drag_handle(gizmo_module, nodes, space, scene, strip, 2, (0.35, 0.35))
+    _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
     after = H.render_scene(scene, "convex_refused", frame=1)
 
     if np.isnan(after).any():
@@ -217,6 +297,8 @@ def test_a_refused_drag_renders_the_shape_it_stopped_at():
 TESTS = (
     test_predicate_separates_the_shapes,
     test_drag_refuses_to_enter_a_concave_shape,
+    test_the_handle_moves_again_the_moment_the_drag_reverses,
+    test_a_drag_along_the_boundary_keeps_moving,
     test_a_refused_drag_renders_the_shape_it_stopped_at,
 )
 
