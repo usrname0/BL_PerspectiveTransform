@@ -20,6 +20,8 @@ renders.
 Because the transform lives in a node group on the strip, it survives save and
 load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
 
+![Text and other visual strips work too](./examples/demo_texttoo.png)
+
 ## Compatibility
 
 - **Blender 5.0 or newer.** Compositor strip modifiers, which this depends on,
