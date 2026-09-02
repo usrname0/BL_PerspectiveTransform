@@ -4,10 +4,10 @@
 # Blender Extension Manifest
 schema_version = "1.0.0"
 id = "BL_PerspectiveTransform"
-version = "1.0.0"
+version = "2.0.0"
 
 name = "BL Perspective Transform"
-tagline = "Use corner handles for perspective distortion in the Blender VSE Preview window"
+tagline = "Corner-pin perspective distortion for the VSE preview"
 type = "add-on"
 
 # Author and maintainer info
@@ -21,21 +21,25 @@ website = "https://github.com/usrname0/BL_PerspectiveTransform"
 tags = ["Sequencer", "User Interface"]
 
 # Requirements
-blender_version_min = "4.4.0"
+blender_version_min = "5.0.0"
 
 # License - must be GPL compatible
 license = ["SPDX:GPL-3.0-or-later"]
 
 # Description - must be clear about all functionality
-description = """A perspective transformation interface for Blender's Video Sequence Editor (VSE).
+description = """A corner-pin perspective transform for Blender's Video Sequence Editor.
+
+Drag the four corners of a strip in the preview to distort it, and have the distortion render.
 
 Features:
-• Apply perspective distortion using 4 corner handles
-• Click and drag corner handles for perspective transformation in the VSE Preview window
-• Select the perspective tool via toolbar, menu or shortcut (default "P")
-• Respects user's custom-keybinds
-• Works with all strip types that support transformation
-• Real-time preview of perspective changes
+- Four draggable corner handles in the VSE preview
+- Renders as part of Blender's normal strip pipeline, not a preview-only overlay
+- Works with IMAGE and MOVIE strips
+- Correct alongside the strip's own scale, rotation, mirror and crop
+- Every corner can be keyframed
+- Select the tool via toolbar, menu or shortcut (default "P")
+
+Stores the transform as a Corner Pin node in a compositor strip modifier, so it requires Blender 5.0 or newer.
 """
 
 # Copyright notices
@@ -55,6 +59,9 @@ paths_exclude_pattern = [
     "/.github/",
 	"/icons/*.png",
 	"/icons/*.svg",
+	"/icons/*.blend",
+	"/icons/*.blend1",
+	"/icons/Blender_export_dat.py",
     "/docs/",
     "/tests/",
     "/*.md",
