@@ -8,13 +8,10 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 
 ![Dragging a corner handle in the VSE preview](./examples/demo.gif)
 
-Corners can be pushed a long way. Below, all four have been dragged well past
-the strip bounds after using **Add Headroom** - the checkered area is the room
-that created.
+Corners can be dragged anywhere within the strip's original geometry, which can
+be scaled, rotated, cropped, etc. as usual.
 
 ![An extreme corner-pin with headroom added](./examples/demo_complex.png)
-
-## How it works
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
 so Blender evaluates it as part of normal strip rendering. It is not a preview
@@ -44,7 +41,9 @@ interpolation setting, and Reset / Clear buttons.
 Blender's Corner Pin node clamps corners to the edges of the source image, so
 by default a corner cannot be dragged outside the original rectangle. When you
 hit that limit the sidebar offers **Add Headroom**, which enlarges the strip
-while holding the image visually still, leaving room to drag into.
+while holding the image visually still, leaving room to drag into. 
+
+The scale transform (and others) may also be used manually to make room for pins.
 
 ## Installation
 
