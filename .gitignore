@@ -202,3 +202,4 @@ cython_debug/
 .cursorindexingignore__pycache__/
 *.pyc
 tests/_output/
+/zips/
