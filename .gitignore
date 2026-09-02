@@ -204,3 +204,6 @@ cython_debug/
 *.pyc
 tests/_output/
 /zips/
+
+# Blender auto-backups
+*.blend1

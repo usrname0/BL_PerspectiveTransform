@@ -38,10 +38,10 @@ interpolation setting, and Reset / Clear buttons.
 
 ### Dragging corners outward
 
-Blender's Corner Pin node clamps corners to the edges of the source image, so
-by default a corner cannot be dragged outside the original rectangle. When you
-hit that limit the sidebar offers **Add Headroom**, which enlarges the strip
-while holding the image visually still, leaving room to drag into.
+Blender's Corner Pin node clamps corners to the edges of the source rectangle,
+so by default a corner cannot be dragged outside the strip's original bounds.
+When you hit that limit the sidebar offers **Add Headroom**, which enlarges the
+strip while holding the image visually still, leaving room to drag into.
 
 The scale transform (and others) may also be used manually to make room for pins.
 
