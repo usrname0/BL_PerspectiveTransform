@@ -165,13 +165,31 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         return {'RUNNING_MODAL'}
 
     def _drag_to(self, context, region_x, region_y):
-        """Write the cursor position into this corner's pin socket."""
+        """
+        Write the cursor position into this corner's pin socket.
+
+        A move that would make the quad concave, self-intersecting or
+        degenerate is refused outright rather than written: the Corner Pin
+        solver cannot express such a quad and renders a blank or garbage frame
+        instead of failing, with no way for the user to tell what went wrong.
+        Refusing leaves the handle at the last good position, so it stops at
+        the boundary and picks the cursor up again on the way back - the same
+        way the unit-square clamp already stops it at the image edge.
+        """
         if self._edit_node is None or context.region is None:
             return
         scene = nodes.get_sequencer_scene(context)
         frame_point = _region_to_frame(context.region.view2d, scene, region_x, region_y)
-        nodes.write_corner(self._edit_node, self.handle_index,
-                           space.apply(self._drag_matrix, frame_point))
+        corner = nodes.clamp_corner(space.apply(self._drag_matrix, frame_point))
+
+        # Only this corner moves during a drag, so the other three are still
+        # whatever they were on invoke.
+        candidate = list(self._pin_on_invoke)
+        candidate[self.handle_index] = corner
+        if not space.is_convex_quad(candidate):
+            return
+
+        nodes.write_corner(self._edit_node, self.handle_index, corner)
         _invalidate(nodes.get_active_strip(context))
 
     def _finish_edit(self, context):
@@ -179,8 +197,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         Do the end-of-drag work: auto-key, then push undo.
 
         Writing a socket through RNA never triggers Blender's auto-key, so the
-        drag has to ask for it explicitly. All four corners are keyed together
-        - see perspective_anim.autokey_pin for why.
+        drag has to ask for it explicitly. Only the corner that moved is keyed
+        - see perspective_anim.autokey_corner for why.
 
         Called from exit(), not from modal(). Blender's gizmo tweak operator
         matches the confirming mouse release against its own modal keymap and
@@ -198,7 +216,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
 
         # Read the flag from the context, not the sequencer scene: the auto-key
         # toggle writes to the window scene, and 5.0 decoupled the two.
-        anim.autokey_pin(strip, scene, getattr(context, "tool_settings", None))
+        anim.autokey_corner(strip, scene, self.handle_index,
+                            getattr(context, "tool_settings", None))
         bpy.ops.ed.undo_push(message="Perspective Corner")
 
     def _restore(self, context):

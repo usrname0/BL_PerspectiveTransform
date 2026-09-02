@@ -1,9 +1,14 @@
 """
-BL Perspective Transform - Operators and sidebar panel.
+BL Perspective Transform - Operators and the strip properties panel.
 
 The corner handles do the actual editing; these operators cover the things a
 drag cannot express: resetting, removing the transform, and making room for
 corners beyond the image edge.
+
+STRIP_PT_perspective is the numeric view of the same state, and lives in the
+Properties editor beneath Blender's own Crop. See the addon's register() for
+how it gets placed there, since panel order is not something a panel can ask
+for on its own.
 """
 
 import bpy
@@ -12,6 +17,7 @@ from bpy.props import FloatProperty
 from . import perspective_anim as anim
 from . import perspective_core as core
 from . import perspective_nodes as nodes
+from . import perspective_space as space
 
 TOOL_IDNAME = "sequencer.perspective_handles_tool"
 
@@ -139,83 +145,16 @@ class SEQUENCER_OT_perspective_add_headroom(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def draw_perspective(layout, context, strip):
-    """
-    Draw the perspective controls for one strip.
-
-    Shared by the preview sidebar and the Properties editor, so the two can
-    never drift apart.
-
-    use_property_split and use_property_decorate are what give each corner the
-    animate dot on the right, which is how a corner gets keyframed by hand and
-    how an already-keyed corner shows its state. Without them Blender draws no
-    decorator column at all, and the values look unanimatable even though they
-    are not - see DEV.md -> Keyframing.
-    """
-    modifier = nodes.find_modifier(strip) if strip else None
-
-    if modifier is None:
-        column = layout.column()
-        column.label(text="No perspective on this strip")
-        column.label(text="Drag a corner handle to begin", icon='INFO')
-        column.operator(SEQUENCER_OT_perspective_activate.bl_idname,
-                        text="Activate Tool", icon='MOD_WARP')
-        return
-
-    node = nodes.get_corner_pin_node(modifier.node_group)
-    if node is None:
-        layout.label(text="Node group has no Corner Pin node", icon='ERROR')
-        return
-
-    layout.use_property_split = True
-    layout.use_property_decorate = True
-
-    column = layout.column(align=True)
-    for socket_name, label in zip(nodes.CORNER_SOCKETS, nodes.CORNER_LABELS):
-        column.prop(node.inputs[socket_name], "default_value", text=label)
-
-    column = layout.column()
-    column.prop(node.inputs['Interpolation'], "default_value", text="Interpolation")
-
-    # Dragging a keyed corner with auto-key off looks like it worked and is
-    # undone on the next frame change. Say so rather than let it puzzle people.
-    if anim.is_animated(strip):
-        tool_settings = getattr(nodes.get_sequencer_scene(context), "tool_settings", None)
-        if tool_settings is not None and not tool_settings.use_keyframe_insert_auto:
-            box = layout.box()
-            box.label(text="Corners are keyframed", icon='ANIM')
-            box.label(text="Turn on auto-keying, or edits revert on frame change")
-
-    if core.needs_headroom(strip):
-        box = layout.box()
-        box.label(text="Corners are at the image edge", icon='INFO')
-        box.operator(SEQUENCER_OT_perspective_add_headroom.bl_idname,
-                     text="Add Headroom")
-
-    row = layout.row(align=True)
-    row.operator(SEQUENCER_OT_perspective_reset.bl_idname, text="Reset")
-    row.operator(SEQUENCER_OT_perspective_clear.bl_idname, text="Clear")
-
-
-class SEQUENCER_PT_perspective(bpy.types.Panel):
-    """Preview sidebar panel showing the corner values of the active strip"""
-
-    bl_idname = "SEQUENCER_PT_perspective"
-    bl_label = "Perspective"
-    bl_space_type = 'SEQUENCE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "Perspective"
-
-    @classmethod
-    def poll(cls, context):
-        return nodes.get_active_strip(context) is not None
-
-    def draw(self, context):
-        draw_perspective(self.layout, context, nodes.get_active_strip(context))
-
-
 class STRIP_PT_perspective(bpy.types.Panel):
-    """Strip properties panel, alongside Blender's own Transform and Crop"""
+    """
+    Strip properties panel, sitting directly beneath Blender's own Crop.
+
+    This is the only numeric UI the addon has. There was a second copy in the
+    preview sidebar under its own "Perspective" tab, which was where the values
+    lived before the Properties panel existed; it was removed once this one had
+    a proper home next to Transform and Crop, rather than leaving a whole
+    sidebar tab standing for one duplicated panel.
+    """
 
     bl_idname = "STRIP_PT_perspective"
     bl_label = "Perspective"
@@ -232,7 +171,76 @@ class STRIP_PT_perspective(bpy.types.Panel):
         return strip is not None and strip.type != 'SOUND'
 
     def draw(self, context):
-        draw_perspective(self.layout, context, context.active_strip)
+        """
+        Draw the corner values and whatever the strip's state needs saying.
+
+        use_property_split and use_property_decorate are what give each row the
+        animate dot on the right, which is how a corner gets keyframed by hand
+        and how an already-keyed one shows its state. Without them Blender
+        draws no decorator column at all, and the values look unanimatable even
+        though they are not - see DEV.md -> Keyframing.
+        """
+        layout = self.layout
+        strip = context.active_strip
+        modifier = nodes.find_modifier(strip) if strip else None
+
+        if modifier is None:
+            column = layout.column()
+            column.label(text="No perspective on this strip")
+            column.label(text="Drag a corner handle to begin", icon='INFO')
+            column.operator(SEQUENCER_OT_perspective_activate.bl_idname,
+                            text="Activate Tool", icon='MOD_WARP')
+            return
+
+        node = nodes.get_corner_pin_node(modifier.node_group)
+        if node is None:
+            layout.label(text="Node group has no Corner Pin node", icon='ERROR')
+            return
+
+        layout.use_property_split = True
+        layout.use_property_decorate = True
+
+        # Each corner is drawn as two scalar rows rather than one vector row,
+        # so it reads "Bottom Left X" / "Y" the way Blender's own Transform
+        # panel reads "Position X" / "Y". The pair is aligned together and the
+        # four pairs are not, which is the same grouping Blender uses.
+        for socket_name, label in zip(nodes.CORNER_SOCKETS, nodes.CORNER_LABELS):
+            socket = node.inputs[socket_name]
+            column = layout.column(align=True)
+            column.prop(socket, "default_value", index=0, text=label + " X")
+            column.prop(socket, "default_value", index=1, text="Y")
+
+        column = layout.column()
+        column.prop(node.inputs['Interpolation'], "default_value", text="Interpolation")
+
+        # The handle drag refuses to enter a non-convex shape, but these fields
+        # write the sockets directly and nothing can intercept that. Say what
+        # happened, because the render gives no clue: a concave quad has no
+        # homography, and Blender's solver answers with a blank or garbage
+        # frame rather than an error.
+        if not space.is_convex_quad(nodes.read_pin(strip)):
+            box = layout.box()
+            box.label(text="Corners do not form a convex shape", icon='ERROR')
+            box.label(text="This cannot be rendered; move a corner back")
+
+        # Dragging a keyed corner with auto-key off looks like it worked and is
+        # undone on the next frame change. Say so rather than let it puzzle people.
+        if anim.is_animated(strip):
+            tool_settings = getattr(nodes.get_sequencer_scene(context), "tool_settings", None)
+            if tool_settings is not None and not tool_settings.use_keyframe_insert_auto:
+                box = layout.box()
+                box.label(text="Corners are keyframed", icon='ANIM')
+                box.label(text="Turn on auto-keying, or edits revert on frame change")
+
+        if core.needs_headroom(strip):
+            box = layout.box()
+            box.label(text="Corners are at the image edge", icon='INFO')
+            box.operator(SEQUENCER_OT_perspective_add_headroom.bl_idname,
+                         text="Add Headroom")
+
+        row = layout.row(align=True)
+        row.operator(SEQUENCER_OT_perspective_reset.bl_idname, text="Reset")
+        row.operator(SEQUENCER_OT_perspective_clear.bl_idname, text="Clear")
 
 
 classes = (
@@ -240,6 +248,5 @@ classes = (
     SEQUENCER_OT_perspective_reset,
     SEQUENCER_OT_perspective_clear,
     SEQUENCER_OT_perspective_add_headroom,
-    SEQUENCER_PT_perspective,
     STRIP_PT_perspective,
 )

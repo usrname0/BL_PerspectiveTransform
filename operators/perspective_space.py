@@ -222,3 +222,52 @@ def frame_to_pin(strip, scene, frame_points):
     """
     matrix = frame_to_pin_matrix(strip, scene)
     return [apply(matrix, p) for p in frame_points]
+
+
+# Smallest accepted cross product between adjacent edges of the pin quad, in
+# pin-space units squared. Measured on 5.2.1 by rendering a quad swept towards
+# collinearity: the render stayed sane down to 1e-4, where the image had
+# degenerated to 17 percent frame coverage, and collapsed to an empty frame at
+# exactly 0. See DEV.md -> Convexity.
+CONVEX_EPSILON = 1e-4
+
+
+def is_convex_quad(corners, epsilon=CONVEX_EPSILON):
+    """
+    Return True if four corners form a convex, non-degenerate quadrilateral.
+
+    A homography maps the unit square onto a convex quad and onto nothing else,
+    so Blender's Corner Pin has no solution for a concave or self-intersecting
+    one. It does not fail cleanly either: measured on 5.2.1, every concave quad
+    rendered a frame filled edge to edge with garbage, and the collinear case
+    rendered an empty frame - see DEV.md -> Corner Pin.
+
+    Walking the quad, the cross product of each pair of adjacent edges holds a
+    single sign exactly when the polygon is convex and simple; a bow-tie
+    produces mixed signs. A near-zero magnitude means three points have gone
+    collinear, which is just as unsolvable, so the magnitude is checked too.
+
+    Args:
+        corners: four (x, y) points in perspective_nodes.CORNER_SOCKETS order,
+            which walks the quad rather than jumping across it
+        epsilon: smallest accepted absolute cross product, in the units of the
+            input squared. The default suits pin space, where the untransformed
+            quad is the unit square and every cross product is 1.
+
+    Returns:
+        bool: True if the quad is convex and no three corners are collinear
+    """
+    sign = 0
+    for index in range(4):
+        ax, ay = float(corners[index][0]), float(corners[index][1])
+        bx, by = float(corners[(index + 1) % 4][0]), float(corners[(index + 1) % 4][1])
+        cx, cy = float(corners[(index + 2) % 4][0]), float(corners[(index + 2) % 4][1])
+        cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        if abs(cross) < epsilon:
+            return False
+        current = 1 if cross > 0.0 else -1
+        if sign == 0:
+            sign = current
+        elif sign != current:
+            return False
+    return True

@@ -34,6 +34,70 @@ TOOL_IDNAME = "sequencer.perspective_handles_tool"
 
 addon_keymaps = []
 
+# Perspective belongs directly beneath Crop, next to the other strip
+# transforms. Panels are ordered by bl_order, and every stock strip panel
+# leaves it at the default 0, so ties fall to registration order and anything
+# an addon registers lands at the bottom of the block. A panel cannot ask to
+# sit in the middle of that; the only lever is to push the stock panels that
+# should follow ours to a higher bl_order. bl_order is read into the C
+# PanelType at registration, so they have to be re-registered for it to count.
+#
+# [measured] 5.2.1: re-registering a panel that a third-party sub-panel is
+# parented to does not orphan the child - bl_parent_id resolves by name at draw
+# time - and the panels come back with their state intact.
+#
+# The one limitation, also measured: a Properties region bakes panel order into
+# itself when it first builds the list, so this only lands if it runs before
+# the Strip tab has been drawn. That is the normal case, since extensions
+# register at startup; enabling the addon by hand while that tab is open leaves
+# Perspective at the bottom until Blender restarts.
+PANELS_AFTER_PERSPECTIVE = (
+    "STRIP_PT_adjust_video",
+    "STRIP_PT_adjust_color",
+    "STRIP_PT_adjust_sound",
+    "STRIP_PT_time",
+    "STRIP_PT_source",
+)
+
+# Above our panel's default 0 and below STRIP_PT_custom_props, which Blender
+# already pins to 1000 so Custom Properties stays last.
+PANEL_ORDER_AFTER = 10
+
+# (class, original bl_order or None if the class did not define one), so
+# unregister can put Blender's UI back exactly as it found it.
+_reordered_panels = []
+
+
+def _order_panels_after_perspective():
+    """Push the stock strip panels that belong below ours to a higher bl_order."""
+    for name in PANELS_AFTER_PERSPECTIVE:
+        cls = getattr(bpy.types, name, None)
+        if cls is None:
+            continue  # a future Blender renamed or dropped it; order is cosmetic
+        original = cls.__dict__.get("bl_order")
+        try:
+            bpy.utils.unregister_class(cls)
+            cls.bl_order = PANEL_ORDER_AFTER
+            bpy.utils.register_class(cls)
+        except (RuntimeError, ValueError):
+            continue
+        _reordered_panels.append((cls, original))
+
+
+def _restore_panel_order():
+    """Undo _order_panels_after_perspective, leaving Blender's UI as found."""
+    for cls, original in reversed(_reordered_panels):
+        try:
+            bpy.utils.unregister_class(cls)
+            if original is None:
+                del cls.bl_order
+            else:
+                cls.bl_order = original
+            bpy.utils.register_class(cls)
+        except (RuntimeError, ValueError, AttributeError):
+            continue
+    _reordered_panels.clear()
+
 
 class PERSPECTIVE_TOOL_perspective_handles(WorkSpaceTool):
     """Preview toolbar entry that shows the four corner handles."""
@@ -95,6 +159,8 @@ def register():
     for cls in operator_classes:
         bpy.utils.register_class(cls)
 
+    _order_panels_after_perspective()
+
     register_perspective_handles_gizmo()
 
     keyconfig = bpy.context.window_manager.keyconfigs.addon
@@ -132,6 +198,8 @@ def unregister():
     addon_keymaps.clear()
 
     unregister_perspective_handles_gizmo()
+
+    _restore_panel_order()
 
     for cls in reversed(operator_classes):
         bpy.utils.unregister_class(cls)

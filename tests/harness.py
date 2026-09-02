@@ -132,6 +132,22 @@ def add_image_strip(scene, image_path):
     return strip
 
 
+def set_duration(strip, frames):
+    """
+    Stretch a strip to a number of frames, across the 5.x rename.
+
+    An image strip is one frame long by default, and any test rendering at
+    several frames needs it longer. `duration` is the 5.1 replacement for
+    `frame_final_duration`; 5.0 is the addon's stated minimum and has only the
+    old name, so a test that used the new one unconditionally simply raised
+    there and took the whole suite with it.
+    """
+    if "duration" in strip.bl_rna.properties:
+        strip.duration = frames
+    else:
+        strip.frame_final_duration = frames
+
+
 def add_compositor_modifier(strip, scene, node_group):
     """
     Attach a compositor modifier carrying node_group.

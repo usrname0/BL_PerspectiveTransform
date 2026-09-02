@@ -3,7 +3,7 @@ BL Perspective Transform - keyframing the corner pin.
 
 The four Corner Pin sockets are ordinary animatable RNA properties on the node
 group datablock, so most of this works with no help from the addon: Blender
-renders the animation, drives the preview from it, tracks it in the sidebar as
+renders the animation, drives the preview from it, tracks it in the panel as
 the playhead moves, and lists the channels in the Dope Sheet under
 Scene -> <node group name>.
 
@@ -11,7 +11,8 @@ Two things Blender cannot do on its own, and this module supplies:
 
   * Auto-keying on a drag. Auto-key only fires for operators that ask for it.
     The corner handles write their socket through plain RNA, which never
-    triggers it, so the gizmo calls autokey_corner() when a drag ends.
+    triggers it, so the gizmo calls autokey_corner() when a drag ends. That
+    keys the dragged corner and nothing else - see autokey_corner.
   * Keeping keyed corners honest through a headroom change. Add Headroom
     rewrites the socket values, but an animated corner is driven by its fcurve
     and simply snaps back on the next frame, tearing the transform apart. The
@@ -147,6 +148,9 @@ def insert_pin_keys(strip, scene, frame=None):
     """
     Key all four corners at once.
 
+    Not on the drag path - a drag keys only the corner it moved - but the
+    whole-quad key is what a test fixture or a caller posing a shape wants.
+
     Returns:
         int: how many corners were keyed
     """
@@ -154,19 +158,26 @@ def insert_pin_keys(strip, scene, frame=None):
                if insert_corner_key(strip, scene, index, frame))
 
 
-def autokey_pin(strip, scene, tool_settings=None):
+def autokey_corner(strip, scene, index, tool_settings=None):
     """
-    Key the whole quad if the user has auto-keying switched on.
+    Key the corner that just moved, if the user has auto-keying switched on.
 
-    Called when a handle drag finishes. All four corners are keyed, not just
-    the one that moved, because the quad is a single shape: keying only the
-    dragged corner would leave the other three as unanimated constants, so
-    their current position would apply to every frame including ones the user
-    already posed. Blender keys a whole transform for the same reason.
+    Called when a handle drag finishes, and deliberately keys *only* the
+    dragged corner. Keying all four is defensible - the quad is one shape, and
+    it is what Blender does for a whole transform - but it surprises people:
+    dragging one handle silently commits the other three to the timeline, and
+    the extra channels then have to be found and deleted by hand. Auto-key on
+    any other property in Blender keys the thing you touched, and this now
+    matches.
+
+    The consequence to be aware of is the ordinary one for an unanimated
+    property: an untouched corner stays a constant applying to every frame, so
+    its current value holds across frames the user has already posed.
 
     Args:
         strip: the strip being edited
         scene: the sequencer scene, which supplies the frame to key at
+        index: corner index in perspective_nodes.CORNER_SOCKETS order
         tool_settings: where to read the auto-key flag from. Pass
             context.tool_settings: the toggle in the UI writes to the *window*
             scene, which since 5.0 need not be the sequencer scene, so reading
@@ -179,7 +190,7 @@ def autokey_pin(strip, scene, tool_settings=None):
         tool_settings = getattr(scene, "tool_settings", None)
     if tool_settings is None or not tool_settings.use_keyframe_insert_auto:
         return 0
-    return insert_pin_keys(strip, scene)
+    return 1 if insert_corner_key(strip, scene, index) else 0
 
 
 def pin_matches(strip, corners, tolerance=1e-6):

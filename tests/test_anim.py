@@ -31,8 +31,7 @@ def _setup(name, res=512, duration=40):
     src = H.make_source_image(os.path.join(H.scratch_dir(), "anim_source.png"))
     scene = H.make_scene(name, res, res)
     strip = H.add_image_strip(scene, src)
-    # duration is the 5.x replacement for the deprecated frame_final_duration.
-    strip.duration = duration
+    H.set_duration(strip, duration)
     nodes.write_pin(strip, scene, nodes.IDENTITY_PIN)
     return scene, strip
 
@@ -83,23 +82,36 @@ def test_keyed_corner_animates_the_render():
 
 
 def test_autokey_only_fires_when_enabled():
-    """Auto-key must be opt-in, and must key the whole quad when it is on."""
+    """
+    Auto-key must be opt-in, and must key only the corner that moved.
+
+    Keying the whole quad is what this used to do, on the reasoning that the
+    quad is one shape. It surprised people instead: dragging one handle
+    committed the other three to the timeline behind their back. Auto-key on
+    any other Blender property keys the thing you touched.
+    """
     anim = H.import_addon_module("operators.perspective_anim")
     scene, strip = _setup("anim_autokey")
     failures = []
 
     scene.tool_settings.use_keyframe_insert_auto = False
-    if anim.autokey_pin(strip, scene) != 0:
+    if anim.autokey_corner(strip, scene, 2) != 0:
         failures.append("auto-key fired with the setting off")
     if anim.is_animated(strip):
         failures.append("auto-key created channels with the setting off")
 
     scene.tool_settings.use_keyframe_insert_auto = True
-    keyed = anim.autokey_pin(strip, scene)
-    if keyed != 4:
-        failures.append(f"auto-key should key all four corners, keyed {keyed}")
-    if anim.animated_corners(strip) != {0, 1, 2, 3}:
-        failures.append(f"expected every corner animated, got {anim.animated_corners(strip)}")
+    keyed = anim.autokey_corner(strip, scene, 2)
+    if keyed != 1:
+        failures.append(f"auto-key should key one corner, keyed {keyed}")
+    if anim.animated_corners(strip) != {2}:
+        failures.append(
+            f"expected only the dragged corner animated, got {anim.animated_corners(strip)}")
+
+    # A second corner keys on its own without disturbing the first.
+    anim.autokey_corner(strip, scene, 0)
+    if anim.animated_corners(strip) != {0, 2}:
+        failures.append(f"keying a second corner gave {anim.animated_corners(strip)}")
 
     return failures
 
@@ -122,11 +134,11 @@ def test_autokey_reads_the_flag_it_is_given():
     other.tool_settings.use_keyframe_insert_auto = True
 
     # The sequencer scene says no, but the scene the user toggled says yes.
-    if anim.autokey_pin(strip, scene, other.tool_settings) != 4:
+    if anim.autokey_corner(strip, scene, 1, other.tool_settings) != 1:
         failures.append("did not key when the passed tool_settings had auto-key on")
 
     anim.clear_animation(strip)
-    if anim.autokey_pin(strip, scene) != 0:
+    if anim.autokey_corner(strip, scene, 1) != 0:
         failures.append("keyed from the scene's own settings when auto-key was off")
 
     return failures
@@ -220,6 +232,7 @@ def test_gizmo_commits_the_drag_from_exit():
     before = [tuple(c) for c in nodes.read_pin(strip)]
     stub._pin_on_invoke = [tuple(c) for c in before]
     stub._edit_node = nodes.prepare_for_edit(strip, scene)
+    stub.handle_index = 2
 
     corners = list(nodes.IDENTITY_PIN)
     corners[2] = (0.55, 0.6)
@@ -231,9 +244,11 @@ def test_gizmo_commits_the_drag_from_exit():
         # undo_push needs a window; auto-keying has already happened by then.
         pass
 
-    if sorted(anim.animated_corners(strip)) != [0, 1, 2, 3]:
+    # Only the dragged corner, which is what makes this worth asserting: the
+    # gizmo has to pass its handle_index through, not key the quad wholesale.
+    if sorted(anim.animated_corners(strip)) != [2]:
         failures.append(
-            f"exit() did not auto-key the quad, got {sorted(anim.animated_corners(strip))}")
+            f"exit() should auto-key only corner 2, got {sorted(anim.animated_corners(strip))}")
 
     # --- behaviour: cancel restores and does not key ---------------------
     anim.clear_animation(strip)

@@ -42,9 +42,23 @@ def run():
                  "SEQUENCER_OT_perspective_reset",
                  "SEQUENCER_OT_perspective_clear",
                  "SEQUENCER_OT_perspective_add_headroom",
-                 "SEQUENCER_PT_perspective"):
+                 "STRIP_PT_perspective"):
         if not hasattr(bpy.types, name):
             failures.append(f"{name} was not registered")
+
+    # The preview sidebar copy of the panel was removed once the Properties
+    # one had a home beside Transform and Crop. Registering it again would
+    # bring back a whole sidebar tab holding one duplicated panel.
+    if hasattr(bpy.types, "SEQUENCER_PT_perspective"):
+        failures.append("SEQUENCER_PT_perspective is back in the preview sidebar")
+
+    # register() reorders Blender's own strip panels so ours lands under Crop.
+    for name in addon.PANELS_AFTER_PERSPECTIVE:
+        cls = getattr(bpy.types, name, None)
+        if cls is None:
+            failures.append(f"{name} vanished while being reordered")
+        elif getattr(cls, "bl_order", 0) != addon.PANEL_ORDER_AFTER:
+            failures.append(f"{name} was not pushed below the perspective panel")
 
     if not hasattr(bpy.ops.sequencer, "perspective_activate"):
         failures.append("sequencer.perspective_activate operator is missing")
@@ -68,8 +82,15 @@ def run():
         return failures
 
     # Unregistering must leave nothing behind, or a reload stacks duplicates.
-    for name in ("SEQUENCER_PT_perspective", "SEQUENCER_OT_perspective_activate"):
+    for name in ("STRIP_PT_perspective", "SEQUENCER_OT_perspective_activate"):
         if hasattr(bpy.types, name):
             failures.append(f"{name} survived unregister()")
+
+    # Blender's own panels are not ours to keep. Every one we pushed has to go
+    # back to the bl_order it had, which for all of them is none at all.
+    for name in addon.PANELS_AFTER_PERSPECTIVE:
+        cls = getattr(bpy.types, name, None)
+        if cls is not None and "bl_order" in cls.__dict__:
+            failures.append(f"{name} kept the bl_order we gave it after unregister()")
 
     return failures
