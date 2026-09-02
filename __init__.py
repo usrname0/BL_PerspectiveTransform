@@ -99,7 +99,9 @@ def register():
 
     keyconfig = bpy.context.window_manager.keyconfigs.addon
     if keyconfig:
-        keymap = keyconfig.keymaps.new(name="SequencerPreview",
+        # The VSE preview keymap was renamed "SequencerPreview" -> "Preview" in
+        # Blender 4.5. This addon requires 5.0+, so only the new name applies.
+        keymap = keyconfig.keymaps.new(name="Preview",
                                        space_type="SEQUENCE_EDITOR",
                                        region_type="WINDOW")
         addon_keymaps.append(

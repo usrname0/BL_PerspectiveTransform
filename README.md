@@ -6,6 +6,14 @@ distort it, and have the distortion render.
 Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 (default "P").
 
+![Dragging a corner handle in the VSE preview](./examples/demo.gif)
+
+Corners can be pushed a long way. Below, all four have been dragged well past
+the strip bounds after using **Add Headroom** - the checkered area is the room
+that created.
+
+![An extreme corner-pin with headroom added](./examples/demo_complex.png)
+
 ## How it works
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
@@ -41,13 +49,8 @@ while holding the image visually still, leaving room to drag into.
 ## Installation
 
 Download the latest [zip](https://github.com/usrname0/BL_PerspectiveTransform/releases)
-and install it as an extension.
-
-![Manual Install 1](./examples/install1.png)
-
-![Manual Install 2](./examples/install2.png)
-
-![Manual Install 3](./examples/install3.png)
+and install it as an extension: in Blender, Edit > Preferences > Add-ons, then
+the drop-down arrow at the top right > Install from Disk, and pick the zip.
 
 ## Troubleshooting
 
@@ -62,6 +65,3 @@ It should work immediately after installing. If the tool does not appear:
 Run the test suite headlessly:
 
     blender --factory-startup --background --python tests/run.py
-
-See PROJECT.md for architecture and the measured Blender behaviour the
-implementation depends on.
