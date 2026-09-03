@@ -17,7 +17,6 @@ from harness import (add_image_strip, import_addon_module, make_scene,
                      scratch_dir)
 
 nodes = import_addon_module("operators.perspective_nodes")
-core = import_addon_module("operators.perspective_core")
 
 # Squeeze the top edge to the middle half of the image, in addon corner order
 # (bottom-left, top-left, top-right, bottom-right).
@@ -129,28 +128,6 @@ def check_identity_renders_clean(source, failures):
         failures.append(f"identity pin: {opaque} of {total} px opaque, expected all")
 
 
-def check_headroom_preserves_render(source, failures):
-    """Adding headroom must not change what is rendered."""
-    scene = make_scene("render_headroom")
-    strip = add_image_strip(scene, source)
-    nodes.write_pin(strip, scene, SQUEEZE_PIN)
-    before = render_scene(scene, "render_headroom_before")
-
-    if not core.add_headroom(strip, scene, 2.0):
-        failures.append("headroom render check: add_headroom refused")
-        return
-    after = render_scene(scene, "render_headroom_after")
-
-    mask_before = opaque_mask(before)
-    mask_after = opaque_mask(after)
-    disagree = int(np.logical_xor(mask_before, mask_after).sum())
-    # Resampling at the enlarged scale shifts a few edge pixels; anything more
-    # than a thin outline means the image actually moved.
-    if disagree > 3000:
-        failures.append(
-            f"headroom changed the rendered silhouette by {disagree} px")
-
-
 def check_simulated_drag(source, failures):
     """
     Exercise the exact path a corner drag takes, and check where it lands.
@@ -198,6 +175,5 @@ def run():
     check_image_strip(source, failures)
     check_perspective_correct(source, failures)
     check_simulated_drag(source, failures)
-    check_headroom_preserves_render(source, failures)
     check_movie_strip(make_movie(source, failures), failures)
     return failures

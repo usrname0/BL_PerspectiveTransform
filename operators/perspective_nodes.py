@@ -248,8 +248,9 @@ def write_pin(strip, scene, corners):
 
     Values are clamped to the unit square because the Corner Pin node silently
     ignores anything outside it - an out-of-range pin renders identically to no
-    pin at all, which would look like the addon had simply stopped working.
-    Use add_headroom() to make room for corners beyond the image edge.
+    pin at all, which would look like the addon had simply stopped working. A
+    corner therefore cannot leave the source image rectangle; scaling the strip
+    down is what makes room to pin into.
 
     Args:
         strip: the strip to write to

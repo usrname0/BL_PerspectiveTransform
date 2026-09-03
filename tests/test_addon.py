@@ -79,6 +79,9 @@ def run():
     except Exception as error:
         return [f"addon package failed to import: {type(error).__name__}: {error}"]
 
+    defaults = importlib.import_module(
+        addon.__name__ + ".operators.perspective_defaults")
+
     try:
         addon.register()
     except Exception as error:
@@ -88,7 +91,6 @@ def run():
     for name in ("SEQUENCER_OT_perspective_activate",
                  "SEQUENCER_OT_perspective_reset",
                  "SEQUENCER_OT_perspective_clear",
-                 "SEQUENCER_OT_perspective_add_headroom",
                  "STRIP_PT_perspective"):
         if not hasattr(bpy.types, name):
             failures.append(f"{name} was not registered")
@@ -109,6 +111,11 @@ def run():
 
     if not hasattr(bpy.ops.sequencer, "perspective_activate"):
         failures.append("sequencer.perspective_activate operator is missing")
+
+    # The panel draws these on every strip that has no transform yet, so a
+    # missing pointer is a panel that raises on the first strip selected.
+    if not hasattr(bpy.types.WindowManager, defaults.WM_PROPERTY):
+        failures.append(f"WindowManager.{defaults.WM_PROPERTY} was not registered")
 
     failures.extend(_check_menu_operator_context(addon))
 
@@ -134,6 +141,9 @@ def run():
     for name in ("STRIP_PT_perspective", "SEQUENCER_OT_perspective_activate"):
         if hasattr(bpy.types, name):
             failures.append(f"{name} survived unregister()")
+
+    if hasattr(bpy.types.WindowManager, defaults.WM_PROPERTY):
+        failures.append(f"WindowManager.{defaults.WM_PROPERTY} survived unregister()")
 
     # Blender's own panels are not ours to keep. Every one we pushed has to go
     # back to the bl_order it had - which for all of them is none at all - and

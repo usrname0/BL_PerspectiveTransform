@@ -13,18 +13,12 @@ Two things Blender cannot do on its own, and this module supplies:
     The corner handles write their socket through plain RNA, which never
     triggers it, so the gizmo calls autokey_corner() when a drag ends. That
     keys the dragged corner and nothing else - see autokey_corner.
-  * Keeping keyed corners honest through a headroom change. Add Headroom
-    rewrites the socket values, but an animated corner is driven by its fcurve
-    and simply snaps back on the next frame, tearing the transform apart. The
-    same remap has to be applied to the stored key values.
+  * Taking the animation with a Reset. Writing identity into a keyed socket is
+    undone by the very next frame change, so Reset has to remove the fcurves
+    too - see clear_animation.
 
-Two more facts this module is built on:
-
-  * socket.keyframe_insert("default_value") animates the rendered result
-  * the headroom remap is exactly  new = origin + (old - origin) / factor,
-    which is axis separable and independent of rotation, mirror, offset,
-    source size and resolution - so each fcurve remaps on its own, and the
-    bezier handles remap with it.
+The fact the rest of it rests on: socket.keyframe_insert("default_value")
+animates the rendered result, not merely the value shown in the panel.
 """
 
 from . import perspective_nodes as nodes
@@ -202,58 +196,6 @@ def pin_matches(strip, corners, tolerance=1e-6):
         if abs(before[0] - after[0]) > tolerance or abs(before[1] - after[1]) > tolerance:
             return False
     return True
-
-
-def _remapped(value, centre, factor):
-    """Apply the headroom pin remap to a single scalar."""
-    return centre + (value - centre) / factor
-
-
-def keys_fit_after_remap(strip, origin, factor, tolerance=1e-6):
-    """
-    Return True if every keyed corner value stays inside the unit square.
-
-    The Corner Pin node clamps to 0..1 at evaluation, so a remap that pushes a
-    key outside would silently change the shape of the animation at that frame.
-    Removing headroom is refused in that case, the same way it is refused when
-    the current corners would no longer fit.
-    """
-    for _index, array_index, fcurve in iter_corner_fcurves(strip):
-        centre = float(origin[array_index])
-        for key in fcurve.keyframe_points:
-            value = _remapped(key.co.y, centre, factor)
-            if not (-tolerance <= value <= 1.0 + tolerance):
-                return False
-    return True
-
-
-def remap_corner_keys(strip, origin, factor):
-    """
-    Rescale every keyed corner value for a headroom change.
-
-    The headroom remap is a uniform scale about the strip's transform origin in
-    pin space, so it applies to each channel independently and to the bezier
-    handles with it - the handle frame coordinates are untouched, only their
-    values move, which preserves the shape of the curve exactly.
-
-    Args:
-        strip: the strip whose keys should move
-        origin: the strip's transform origin, as (x, y) in 0..1
-        factor: the same factor passed to add_headroom
-
-    Returns:
-        int: how many keyframes were remapped
-    """
-    count = 0
-    for _index, array_index, fcurve in iter_corner_fcurves(strip):
-        centre = float(origin[array_index])
-        for key in fcurve.keyframe_points:
-            key.co.y = _remapped(key.co.y, centre, factor)
-            key.handle_left.y = _remapped(key.handle_left.y, centre, factor)
-            key.handle_right.y = _remapped(key.handle_right.y, centre, factor)
-            count += 1
-        fcurve.update()
-    return count
 
 
 def clear_animation(strip):

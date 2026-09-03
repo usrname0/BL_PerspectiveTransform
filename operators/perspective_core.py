@@ -1,12 +1,10 @@
 """
 BL Perspective Transform - Core strip helpers.
 
-Thin layer between the gizmo and the node group: strip visibility, converting
-corner positions between frame space and pin space, and the headroom operation
-that makes room for corners beyond the image edge.
+Thin layer between the gizmo and the node group: strip visibility, and
+converting corner positions between frame space and pin space.
 """
 
-from . import perspective_anim as anim
 from . import perspective_nodes as nodes
 from . import perspective_space as space
 
@@ -64,77 +62,3 @@ def set_corners_from_frame(strip, scene, frame_corners):
     matrix = space.frame_to_pin_matrix(strip, scene)
     pin_corners = [space.apply(matrix, point) for point in frame_corners]
     return nodes.write_pin(strip, scene, pin_corners)
-
-
-def needs_headroom(strip, tolerance=1e-4):
-    """
-    Return True if any corner is sitting on the image edge.
-
-    A corner pinned to the edge cannot be dragged further out, because the
-    Corner Pin node clamps its inputs to the unit square. That is the signal
-    that the user needs headroom rather than that they have finished.
-    """
-    for corner in nodes.read_pin(strip):
-        if (corner.x <= tolerance or corner.x >= 1.0 - tolerance
-                or corner.y <= tolerance or corner.y >= 1.0 - tolerance):
-            return True
-    return False
-
-
-def add_headroom(strip, scene, factor=2.0):
-    """
-    Scale the strip up while holding its perspective quad visually still.
-
-    The Corner Pin node clamps its corners to the source image rectangle, so
-    corners can never be dragged beyond the image edge. Scaling the strip
-    enlarges that rectangle while this remaps the pin so nothing appears to
-    move, leaving margin on all sides to drag into.
-
-    A keyframed corner is driven by its fcurve, not by the socket value, so
-    rewriting the socket alone would let the animation snap the corner back on
-    the next frame change while the strip stayed scaled - the image visibly
-    jumps. The stored key values are remapped as well, which holds the whole
-    animation still rather than just the current frame.
-
-    Args:
-        strip: the strip to modify
-        scene: the sequencer scene
-        factor: how much to enlarge by; above 1 adds room, below 1 removes it
-
-    Returns:
-        bool: True if applied. False if the change is impossible without
-        distorting the image, which happens when shrinking past the point
-        where the current corners - or any of their keyframes - would no
-        longer fit inside the image rectangle.
-    """
-    if factor <= 0.0 or not hasattr(strip, "transform"):
-        return False
-
-    # The pin-space remap is a uniform scale about the transform origin, so the
-    # keyframes can be tested and moved without going through the matrices.
-    origin = tuple(strip.transform.origin)
-    if not anim.keys_fit_after_remap(strip, origin, factor):
-        return False
-
-    old_matrix = space.pin_to_frame_matrix(strip, scene)
-    frame_corners = [space.apply(old_matrix, corner) for corner in nodes.read_pin(strip)]
-
-    previous_x = strip.transform.scale_x
-    previous_y = strip.transform.scale_y
-    strip.transform.scale_x = previous_x * factor
-    strip.transform.scale_y = previous_y * factor
-
-    new_matrix = space.frame_to_pin_matrix(strip, scene)
-    new_corners = [space.apply(new_matrix, point) for point in frame_corners]
-
-    # Shrinking can push corners outside the unit square, where they would be
-    # silently clamped and the image would visibly change shape. Refuse instead.
-    for corner in new_corners:
-        if not (-1e-6 <= corner.x <= 1.0 + 1e-6 and -1e-6 <= corner.y <= 1.0 + 1e-6):
-            strip.transform.scale_x = previous_x
-            strip.transform.scale_y = previous_y
-            return False
-
-    nodes.write_pin(strip, scene, new_corners)
-    anim.remap_corner_keys(strip, origin, factor)
-    return True

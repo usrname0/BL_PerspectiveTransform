@@ -77,7 +77,7 @@ def build_corner_pin_group(name, pin=IDENTITY_PIN, prescale=None):
     Args:
         name: datablock name for the node group
         pin: 4 (u, v) pairs in Upper Left, Upper Right, Lower Left, Lower Right order
-        prescale: optional uniform scale applied before the pin, for headroom
+        prescale: optional uniform scale applied before the pin
 
     Returns:
         bpy.types.NodeTree: the created group

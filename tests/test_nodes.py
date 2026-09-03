@@ -2,8 +2,8 @@
 Tests for compositor node group management.
 
 Covers the data-model behaviours that are easy to get subtly wrong and hard to
-notice: clamping, un-sharing a duplicated strip's node group, and headroom
-holding the image visually still while it changes the underlying numbers.
+notice: clamping, un-sharing a duplicated strip's node group, and the panel's
+placeholder values building a transform out of nothing on first write.
 """
 
 import os
@@ -114,40 +114,6 @@ def check_clear_and_reset(source, failures):
         failures.append(f"clear orphaned the node group {group_name}")
 
 
-def check_headroom(source, failures):
-    """Headroom must enlarge the strip while leaving the quad visually still."""
-    scene = make_scene("nodes_headroom")
-    strip = add_image_strip(scene, source)
-    nodes.write_pin(strip, scene, SQUEEZE_PIN)
-
-    before = core.get_corners_in_frame(strip, scene)
-    scale_before = strip.transform.scale_x
-
-    if not core.add_headroom(strip, scene, 2.0):
-        failures.append("add_headroom refused a straightforward enlargement")
-        return
-
-    if abs(strip.transform.scale_x - scale_before * 2.0) > 1e-5:
-        failures.append(f"scale should have doubled, got {strip.transform.scale_x}")
-
-    after = core.get_corners_in_frame(strip, scene)
-    for index, (a, b) in enumerate(zip(before, after)):
-        if not approx(a, b, tolerance=0.5):
-            failures.append(
-                f"headroom moved corner {index} on screen: {tuple(a)} -> {tuple(b)}")
-
-    # The point of headroom is margin to drag into, so no corner should still
-    # be sitting on the image edge.
-    if core.needs_headroom(strip):
-        failures.append("corners are still pinned to the image edge after headroom")
-
-    # Shrinking back below what the corners need must be refused, not silently
-    # clamped into a different shape.
-    nodes.write_pin(strip, scene, ((0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)))
-    if core.add_headroom(strip, scene, 0.25):
-        failures.append("removing headroom should have been refused")
-
-
 def check_frame_roundtrip(source, failures):
     """Corners set from frame space must read back to the same frame positions."""
     scene = make_scene("nodes_frame")
@@ -167,6 +133,93 @@ def check_frame_roundtrip(source, failures):
                 f"frame roundtrip corner {index}: {tuple(a)} -> {tuple(b)}")
 
 
+def check_panel_defaults(source, failures):
+    """
+    The panel's placeholder values must read identity and create on first write.
+
+    STRIP_PT_perspective draws these whenever a strip has no transform, so that
+    the corners and the filter are visible at their defaults the way Blender's
+    own Transform panel shows its own. They store nothing: reading asks the
+    strip, and writing builds the node group.
+    """
+    import bpy
+
+    defaults = import_addon_module("operators.perspective_defaults")
+    scene = make_scene("nodes_defaults")
+    strip = add_image_strip(scene, source)
+    scene.sequence_editor.active_strip = strip
+
+    defaults.register_perspective_defaults()
+    try:
+        # The properties reach the strip through bpy.context, which in a
+        # headless run points at the startup scene rather than this one.
+        with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
+            stand_in = defaults.get_defaults(bpy.context)
+            if stand_in is None:
+                failures.append("the placeholder group did not register")
+                return
+
+            for index, name in enumerate(defaults.CORNER_PROPS):
+                value = tuple(getattr(stand_in, name))
+                if not approx(value, nodes.IDENTITY_PIN[index]):
+                    failures.append(
+                        f"placeholder {name} reads {value}, expected identity "
+                        f"{nodes.IDENTITY_PIN[index]}")
+            if stand_in.filter != defaults.FILTER_DEFAULT:
+                failures.append(
+                    f"placeholder filter reads {stand_in.filter!r}, "
+                    f"expected {defaults.FILTER_DEFAULT!r}")
+            if nodes.has_perspective(strip):
+                failures.append("reading a placeholder created a transform")
+
+            # One write, and the strip has a real transform carrying it.
+            stand_in.upper_right = (0.8, 0.9)
+            if not nodes.has_perspective(strip):
+                failures.append("writing a placeholder did not create the transform")
+                return
+
+            pin = nodes.read_pin(strip)
+            expected = list(nodes.IDENTITY_PIN)
+            expected[2] = (0.8, 0.9)
+            for index, (got, want) in enumerate(zip(pin, expected)):
+                if not approx(got, want):
+                    failures.append(
+                        f"after the placeholder write, corner {index} is "
+                        f"{tuple(got)}, expected {want}")
+
+            # And now the placeholder is a view onto the socket it created.
+            if not approx(tuple(stand_in.upper_right), (0.8, 0.9)):
+                failures.append(
+                    f"placeholder reads back {tuple(stand_in.upper_right)} "
+                    f"rather than the socket it wrote")
+
+            stand_in.filter = 'Nearest'
+            node = nodes.get_corner_pin_node(nodes.find_modifier(strip).node_group)
+            written = node.inputs[defaults.FILTER_SOCKET].default_value
+            if written != 'Nearest':
+                failures.append(
+                    f"placeholder filter wrote {written!r} to the socket, "
+                    f"expected 'Nearest'")
+            if stand_in.filter != 'Nearest':
+                failures.append("placeholder filter did not read its own write back")
+
+            # A write holds the placeholder rows on screen for a moment, so the
+            # drag that created the transform is not cut off when the panel
+            # would otherwise swap in the socket rows underneath the cursor.
+            if not defaults.is_handing_over():
+                failures.append("a placeholder write did not hold the handover open")
+            defaults._handover["until"] = 0.0
+            if defaults.is_handing_over():
+                failures.append("the handover did not close when its deadline passed")
+    finally:
+        defaults.unregister_perspective_defaults()
+
+    # unregister has to take the handover timer with it, or it outlives the addon.
+    import bpy as _bpy
+    if _bpy.app.timers.is_registered(defaults._finish_handover):
+        failures.append("the handover timer survived unregister")
+
+
 def run():
     """Run the node management suite and return a list of failure strings."""
     failures = []
@@ -176,6 +229,6 @@ def run():
     check_clamping(source, failures)
     check_unshare_on_duplicate(source, failures)
     check_clear_and_reset(source, failures)
-    check_headroom(source, failures)
     check_frame_roundtrip(source, failures)
+    check_panel_defaults(source, failures)
     return failures

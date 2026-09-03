@@ -4,10 +4,6 @@ Keyframing the corner pin.
 The interesting claim here is that a keyed corner reaches the *rendered* frame,
 so the important tests render real frames at several times and assert on the
 pixels rather than reading values back out of the fcurves.
-
-The headroom test is the sharpest one: adding headroom to an animated pin must
-leave every rendered frame byte-for-byte where it was, which only happens if
-the keyframe values were remapped along with the strip scale.
 """
 
 import os
@@ -267,88 +263,6 @@ def test_gizmo_commits_the_drag_from_exit():
     return failures
 
 
-def test_headroom_holds_an_animated_pin_still():
-    """
-    Add Headroom must leave every rendered frame unchanged, animation included.
-
-    This is the regression test for the bug where headroom rewrote the socket
-    values but left the fcurves alone, so an animated corner snapped back to
-    its keyed value on the next frame change and the image jumped.
-    """
-    anim = H.import_addon_module("operators.perspective_anim")
-    nodes = H.import_addon_module("operators.perspective_nodes")
-    core = H.import_addon_module("operators.perspective_core")
-    scene, strip = _setup("anim_headroom")
-
-    # Both poses are convex quads, which is the only shape the Corner Pin
-    # homography is defined for - a concave one renders unpredictably and would
-    # make this test flap rather than measure headroom.
-    nodes.write_pin(strip, scene,
-                    ((0.05, 0.05), (0.0, 0.95), (0.85, 0.80), (0.95, 0.10)))
-    anim.insert_pin_keys(strip, scene, frame=1)
-
-    nodes.write_pin(strip, scene,
-                    ((0.15, 0.10), (0.05, 0.90), (0.70, 0.75), (0.90, 0.20)))
-    anim.insert_pin_keys(strip, scene, frame=21)
-
-    frames = (1, 11, 21)
-    before = [_render_at(scene, f"anim_hr_before{f}", f) for f in frames]
-
-    if not core.add_headroom(strip, scene, 2.0):
-        return ["add_headroom refused on an animated pin"]
-
-    after = [_render_at(scene, f"anim_hr_after{f}", f) for f in frames]
-
-    failures = []
-    for frame, was, now in zip(frames, before, after):
-        # Resampling at a different strip scale is not bit-exact, so compare on
-        # coverage and centroid rather than demanding identical pixels.
-        drift = abs(int(H.opaque_mask(was).sum()) - int(H.opaque_mask(now).sum()))
-        if drift > 0.01 * H.opaque_mask(was).sum():
-            failures.append(f"frame {frame}: coverage moved by {drift} px after headroom")
-
-        for name, rgb in (("red", (1, 0, 0)), ("white", (1, 1, 1))):
-            old_c = H.colour_centroid(was, rgb)
-            new_c = H.colour_centroid(now, rgb)
-            if old_c is None or new_c is None:
-                failures.append(f"frame {frame}: {name} quadrant vanished after headroom")
-                continue
-            shift = max(abs(old_c[0] - new_c[0]), abs(old_c[1] - new_c[1]))
-            if shift > 2.0:
-                failures.append(
-                    f"frame {frame}: {name} centroid moved {shift:.1f}px after headroom")
-
-    return failures
-
-
-def test_headroom_refuses_when_a_key_would_not_fit():
-    """Shrinking must be refused when any keyframe would leave the unit square."""
-    anim = H.import_addon_module("operators.perspective_anim")
-    nodes = H.import_addon_module("operators.perspective_nodes")
-    core = H.import_addon_module("operators.perspective_core")
-    scene, strip = _setup("anim_refuse")
-    failures = []
-
-    # Frame 1 sits well inside, frame 21 sits hard on the edge. The current
-    # frame alone would allow the shrink; the keyed frame must veto it.
-    corners = list(nodes.IDENTITY_PIN)
-    corners = [(0.4, 0.4), (0.4, 0.6), (0.6, 0.6), (0.6, 0.4)]
-    nodes.write_pin(strip, scene, corners)
-    anim.insert_pin_keys(strip, scene, frame=1)
-
-    nodes.write_pin(strip, scene, nodes.IDENTITY_PIN)
-    anim.insert_pin_keys(strip, scene, frame=21)
-
-    scene.frame_set(1)
-    scale_before = (strip.transform.scale_x, strip.transform.scale_y)
-    if core.add_headroom(strip, scene, 0.5):
-        failures.append("shrink was allowed even though a keyframe leaves the unit square")
-    if (strip.transform.scale_x, strip.transform.scale_y) != scale_before:
-        failures.append("refused shrink still changed the strip scale")
-
-    return failures
-
-
 def test_reset_and_clear_remove_the_animation():
     """Reset must strip the fcurves; Clear must not leave an orphan action."""
     anim = H.import_addon_module("operators.perspective_anim")
@@ -379,53 +293,13 @@ def test_reset_and_clear_remove_the_animation():
     return failures
 
 
-def test_remap_is_exact_for_the_headroom_factor():
-    """The closed-form key remap must match the matrix it stands in for."""
-    anim = H.import_addon_module("operators.perspective_anim")
-    nodes = H.import_addon_module("operators.perspective_nodes")
-    space = H.import_addon_module("operators.perspective_space")
-    scene, strip = _setup("anim_remap")
-    failures = []
-
-    strip.transform.rotation = 0.7
-    strip.transform.origin = (0.25, 0.8)
-    strip.transform.offset_x = -40.0
-    strip.use_flip_x = True
-
-    factor = 2.0
-    origin = tuple(strip.transform.origin)
-
-    old_matrix = space.pin_to_frame_matrix(strip, scene)
-    strip.transform.scale_x *= factor
-    strip.transform.scale_y *= factor
-    new_inverse = space.frame_to_pin_matrix(strip, scene)
-    strip.transform.scale_x /= factor
-    strip.transform.scale_y /= factor
-
-    for point in ((0.0, 0.0), (1.0, 1.0), (0.3, 0.9)):
-        through_matrix = space.apply(new_inverse, space.apply(old_matrix, point))
-        closed_form = (anim._remapped(point[0], origin[0], factor),
-                       anim._remapped(point[1], origin[1], factor))
-        error = max(abs(through_matrix[0] - closed_form[0]),
-                    abs(through_matrix[1] - closed_form[1]))
-        if error > 1e-5:
-            failures.append(
-                f"remap mismatch at {point}: matrix {tuple(through_matrix)} "
-                f"vs closed form {closed_form}, error {error:.2e}")
-
-    return failures
-
-
 TESTS = (
     test_keyed_corner_animates_the_render,
     test_autokey_only_fires_when_enabled,
     test_autokey_reads_the_flag_it_is_given,
     test_a_click_that_moves_nothing_is_not_keyed,
     test_gizmo_commits_the_drag_from_exit,
-    test_headroom_holds_an_animated_pin_still,
-    test_headroom_refuses_when_a_key_would_not_fit,
     test_reset_and_clear_remove_the_animation,
-    test_remap_is_exact_for_the_headroom_factor,
 )
 
 

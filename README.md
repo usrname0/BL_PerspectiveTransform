@@ -11,7 +11,7 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 Corners can be dragged anywhere within the strip's geometry, which can
 be scaled out of bounds, rotated, cropped, etc. as usual.
 
-![An extreme corner-pin with headroom added](./examples/demo_complex.png)
+![An extreme corner-pin on a scaled-down strip](./examples/demo_complex.png)
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
 so Blender evaluates it as part of normal strip rendering. What you see is what
@@ -29,8 +29,7 @@ Corners animate the way the rest of Blender does.
 - The keys appear in the **Dope Sheet** under your scene, in a channel named
   after the strip, and retime like any other animation.
 
-**Reset** clears the corner animation along with the shape. 
-**Add Headroom** moves every keyframe with it, so an animated transform stays put.
+**Reset** clears the corner animation along with the shape.
 
 ![Text and other visual strips work too](./examples/demo_texttoo.png)
 
@@ -47,18 +46,22 @@ Corners animate the way the rest of Blender does.
 2. Activate the Perspective tool from the toolbar, or press "P"
 3. Drag any of the four corner handles
 
-Numeric corner values, an interpolation setting and Reset / Clear buttons are in
-the **Perspective** panel, in the **Strip** tab of the Properties editor, just
-below Crop.
+Numeric corner values and a filter setting are in the **Perspective** panel, in
+the **Strip** tab of the Properties editor, just below Crop. It works like the
+Transform and Crop panels above it: the values are always there at their
+defaults, and typing one in gives the strip a perspective without touching the
+preview at all.
+
+**Clear** removes the transform: **Image > Clear > Perspective** in the preview,
+or **Alt P**. **Reset** returns the corners to the image rectangle, and is in the
+tool settings bar at the top of the preview while the Perspective tool is active.
 
 ### Dragging corners outward
 
 Blender's Corner Pin node clamps corners to the edges of the source rectangle,
-so by default a corner cannot be dragged outside the strip's original bounds.
-When you hit that limit the panel offers **Add Headroom**, which enlarges the
-strip while holding the image visually still, leaving room to drag into.
-
-The scale transform (and others) may also be used manually to make room for pins.
+so a corner cannot be dragged outside the strip's original bounds. Scale the
+strip down first, with the strip's own **Scale**, and the corners have somewhere
+to go.
 
 ## Installation
 

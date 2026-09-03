@@ -16,6 +16,8 @@ from pathlib import Path
 
 from .gizmos import (register_perspective_handles_gizmo,
                      unregister_perspective_handles_gizmo)
+from .operators.perspective_defaults import (register_perspective_defaults,
+                                             unregister_perspective_defaults)
 from .operators.perspective_operators import classes as operator_classes
 
 TOOL_IDNAME = "sequencer.perspective_handles_tool"
@@ -184,6 +186,9 @@ _MENUS = (
 
 def register():
     """Register operators, gizmos, the toolbar tool and keymaps."""
+    # Before the panel, which draws these whenever a strip has no transform yet.
+    register_perspective_defaults()
+
     for cls in operator_classes:
         bpy.utils.register_class(cls)
 
@@ -231,3 +236,5 @@ def unregister():
 
     for cls in reversed(operator_classes):
         bpy.utils.unregister_class(cls)
+
+    unregister_perspective_defaults()

@@ -2,8 +2,10 @@
 BL Perspective Transform - Operators and the strip properties panel.
 
 The corner handles do the actual editing; these operators cover the things a
-drag cannot express: resetting, removing the transform, and making room for
-corners beyond the image edge.
+drag cannot express: resetting the corners and removing the transform. Both are
+reached from the preview - Strip > Transform, Image > Clear, and the P and
+Alt P shortcuts - rather than from the panel, because Blender's own Transform
+and Crop panels carry no buttons and this one is meant to read like them.
 
 STRIP_PT_perspective is the numeric view of the same state, and lives in the
 Properties editor beneath Blender's own Crop. See the addon's register() for
@@ -12,10 +14,9 @@ for on its own.
 """
 
 import bpy
-from bpy.props import FloatProperty
 
 from . import perspective_anim as anim
-from . import perspective_core as core
+from . import perspective_defaults as defaults
 from . import perspective_nodes as nodes
 from . import perspective_space as space
 
@@ -101,50 +102,6 @@ class SEQUENCER_OT_perspective_clear(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class SEQUENCER_OT_perspective_add_headroom(bpy.types.Operator):
-    """Scale the strip up so corners can be dragged beyond the image edge"""
-
-    bl_idname = "sequencer.perspective_add_headroom"
-    bl_label = "Add Headroom"
-    bl_description = ("Enlarge the strip while holding the perspective quad still, "
-                      "so corners can be dragged outside the image rectangle")
-    bl_options = {'REGISTER', 'UNDO'}
-
-    factor: FloatProperty(
-        name="Factor",
-        description="How much to enlarge the strip by. Values below 1 remove headroom",
-        default=2.0,
-        min=0.1,
-        max=10.0,
-        soft_min=0.5,
-        soft_max=4.0,
-    )
-
-    @classmethod
-    def poll(cls, context):
-        return bool(_target_strips(context))
-
-    def execute(self, context):
-        scene = nodes.get_sequencer_scene(context)
-        applied = 0
-        refused = 0
-        for strip in _target_strips(context):
-            if core.add_headroom(strip, scene, self.factor):
-                applied += 1
-            else:
-                refused += 1
-
-        if refused and not applied:
-            self.report({'WARNING'},
-                        "Cannot remove headroom: the corners would fall outside the image")
-            return {'CANCELLED'}
-        if refused:
-            self.report({'WARNING'}, f"Applied to {applied} strip(s), skipped {refused}")
-        else:
-            self.report({'INFO'}, f"Headroom applied to {applied} strip(s)")
-        return {'FINISHED'}
-
-
 class STRIP_PT_perspective(bpy.types.Panel):
     """
     Strip properties panel, sitting directly beneath Blender's own Crop.
@@ -168,46 +125,64 @@ class STRIP_PT_perspective(bpy.types.Panel):
 
     def draw(self, context):
         """
-        Draw the corner values and whatever the strip's state needs saying.
+        Draw the filter and the four corners, transform or no transform.
+
+        The rows are the same either way. They bind to the Corner Pin sockets
+        once the strip has a perspective, and to the WindowManager placeholders
+        until then - which is what lets the values sit there at their defaults
+        on a strip nobody has touched, the way Transform and Crop do, instead of
+        the panel explaining that there is nothing to show. Writing a
+        placeholder builds the transform, after which the sockets take over. See
+        perspective_defaults.
 
         use_property_split and use_property_decorate are what give each row the
         animate dot on the right, which is how a corner gets keyframed by hand
-        and how an already-keyed one shows its state. Without them Blender
-        draws no decorator column at all, and the values look unanimatable even
-        though they are not.
+        and how an already-keyed one shows its state. Without them Blender draws
+        no decorator column at all, and the values look unanimatable even though
+        they are not.
         """
         layout = self.layout
         strip = context.active_strip
         modifier = nodes.find_modifier(strip) if strip else None
+        node = nodes.get_corner_pin_node(modifier.node_group) if modifier else None
 
-        if modifier is None:
-            column = layout.column()
-            column.label(text="No perspective on this strip")
-            column.label(text="Drag a corner handle to begin", icon='INFO')
-            column.operator(SEQUENCER_OT_perspective_activate.bl_idname,
-                            text="Activate Tool", icon='MOD_WARP')
-            return
-
-        node = nodes.get_corner_pin_node(modifier.node_group)
-        if node is None:
+        # The modifier is ours but its node group has been emptied out. Nothing
+        # sensible can be drawn, and the placeholders below would write into a
+        # group with nowhere to put the value.
+        if modifier is not None and node is None:
             layout.label(text="Node group has no Corner Pin node", icon='ERROR')
             return
 
         layout.use_property_split = True
         layout.use_property_decorate = True
+        # Blender's own Transform and Crop panels grey out on a muted strip.
+        layout.active = not strip.mute
 
-        # Each corner is drawn as two scalar rows rather than one vector row,
-        # so it reads "Bottom Left X" / "Y" the way Blender's own Transform
-        # panel reads "Position X" / "Y". The pair is aligned together and the
-        # four pairs are not, which is the same grouping Blender uses.
-        for socket_name, label in zip(nodes.CORNER_SOCKETS, nodes.CORNER_LABELS):
-            socket = node.inputs[socket_name]
+        # The handover check is what keeps a drag that has just created the
+        # transform from being cut off by its own success - see
+        # perspective_defaults.HANDOVER_DELAY. The placeholders read the sockets
+        # once they exist, so the values on screen are the real ones either way.
+        if node is None or defaults.is_handing_over():
+            stand_in = defaults.get_defaults(context)
+            filter_target, filter_prop = stand_in, "filter"
+            corners = [(stand_in, name) for name in defaults.CORNER_PROPS]
+        else:
+            filter_target, filter_prop = node.inputs[defaults.FILTER_SOCKET], "default_value"
+            corners = [(node.inputs[name], "default_value") for name in nodes.CORNER_SOCKETS]
+
+        # Filter leads, as it does in Blender's Transform panel, where it is the
+        # row above Position.
+        column = layout.column(align=True)
+        column.prop(filter_target, filter_prop, text="Filter")
+
+        # Each corner is drawn as two scalar rows rather than one vector row, so
+        # it reads "Bottom Left X" / "Y" the way Transform reads "Position X" /
+        # "Y". The pair is aligned together and the four pairs are not, which is
+        # the same grouping Blender uses.
+        for label, (target, prop) in zip(nodes.CORNER_LABELS, corners):
             column = layout.column(align=True)
-            column.prop(socket, "default_value", index=0, text=label + " X")
-            column.prop(socket, "default_value", index=1, text="Y")
-
-        column = layout.column()
-        column.prop(node.inputs['Interpolation'], "default_value", text="Interpolation")
+            column.prop(target, prop, index=0, text=label + " X", slider=True)
+            column.prop(target, prop, index=1, text="Y", slider=True)
 
         # The handle drag refuses to enter a non-convex shape, but these fields
         # write the sockets directly and nothing can intercept that. Say what
@@ -219,21 +194,10 @@ class STRIP_PT_perspective(bpy.types.Panel):
             box.label(text="Corners do not form a convex shape", icon='ERROR')
             box.label(text="This cannot be rendered; move a corner back")
 
-        if core.needs_headroom(strip):
-            box = layout.box()
-            box.label(text="Corners are at the image edge", icon='INFO')
-            box.operator(SEQUENCER_OT_perspective_add_headroom.bl_idname,
-                         text="Add Headroom")
-
-        row = layout.row(align=True)
-        row.operator(SEQUENCER_OT_perspective_reset.bl_idname, text="Reset")
-        row.operator(SEQUENCER_OT_perspective_clear.bl_idname, text="Clear")
-
 
 classes = (
     SEQUENCER_OT_perspective_activate,
     SEQUENCER_OT_perspective_reset,
     SEQUENCER_OT_perspective_clear,
-    SEQUENCER_OT_perspective_add_headroom,
     STRIP_PT_perspective,
 )
