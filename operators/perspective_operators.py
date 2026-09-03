@@ -149,11 +149,7 @@ class STRIP_PT_perspective(bpy.types.Panel):
     """
     Strip properties panel, sitting directly beneath Blender's own Crop.
 
-    This is the only numeric UI the addon has. There was a second copy in the
-    preview sidebar under its own "Perspective" tab, which was where the values
-    lived before the Properties panel existed; it was removed once this one had
-    a proper home next to Transform and Crop, rather than leaving a whole
-    sidebar tab standing for one duplicated panel.
+    This is the only numeric UI the addon has.
     """
 
     bl_idname = "STRIP_PT_perspective"
@@ -178,7 +174,7 @@ class STRIP_PT_perspective(bpy.types.Panel):
         animate dot on the right, which is how a corner gets keyframed by hand
         and how an already-keyed one shows its state. Without them Blender
         draws no decorator column at all, and the values look unanimatable even
-        though they are not - see DEV.md -> Keyframing.
+        though they are not.
         """
         layout = self.layout
         strip = context.active_strip
@@ -225,8 +221,14 @@ class STRIP_PT_perspective(bpy.types.Panel):
 
         # Dragging a keyed corner with auto-key off looks like it worked and is
         # undone on the next frame change. Say so rather than let it puzzle people.
+        #
+        # WARNING: read this flag from the context, never from the sequencer
+        # scene. tool_settings is per-scene and the UI's toggle writes the
+        # window scene's copy, which since 5.0 need not be the scene the
+        # sequencer is showing. Reading the wrong one inverts this warning - it
+        # shows when auto-keying is on, and hides when it is off.
         if anim.is_animated(strip):
-            tool_settings = getattr(nodes.get_sequencer_scene(context), "tool_settings", None)
+            tool_settings = getattr(context, "tool_settings", None)
             if tool_settings is not None and not tool_settings.use_keyframe_insert_auto:
                 box = layout.box()
                 box.label(text="Corners are keyframed", icon='ANIM')

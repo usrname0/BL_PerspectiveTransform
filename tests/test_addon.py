@@ -23,6 +23,53 @@ def _load_package():
     return importlib.import_module(os.path.basename(root))
 
 
+class _RecordingLayout:
+    """Minimal uiLayout stand-in that records the context each button drew with."""
+
+    def __init__(self):
+        # What Blender hands an appended menu draw function: the default, not
+        # whatever the menu's own draw() left behind.
+        self.operator_context = 'INVOKE_REGION_WIN'
+        self.drawn = []
+
+    def operator(self, idname, **_kwargs):
+        self.drawn.append((idname, self.operator_context))
+        return self
+
+
+class _PreviewSpace:
+    view_type = 'PREVIEW'
+
+
+class _PreviewContext:
+    space_data = _PreviewSpace()
+
+
+def _check_menu_operator_context(addon):
+    """Every preview menu entry must draw with INVOKE_REGION_PREVIEW.
+
+    The keymap items live in the "Preview" keymap, which hangs off the
+    RGN_TYPE_PREVIEW region. A button drawn with the default
+    INVOKE_REGION_WIN sends the shortcut lookup to the timeline region
+    instead, where it finds nothing, so the entry appears with no shortcut
+    beside it while every builtin next to it shows one. Measured on 5.2.1:
+    find_item_from_operator returns nothing under INVOKE_REGION_WIN and "P" /
+    "Alt P" under INVOKE_REGION_PREVIEW.
+    """
+    failures = []
+    for menu_name, func in addon._MENUS:
+        menu = type("Menu", (), {"layout": _RecordingLayout()})()
+        func(menu, _PreviewContext())
+        if not menu.layout.drawn:
+            failures.append(f"{menu_name}: drew nothing in a preview space")
+        for idname, context in menu.layout.drawn:
+            if context != 'INVOKE_REGION_PREVIEW':
+                failures.append(
+                    f"{menu_name}: {idname} drawn with {context}, so its "
+                    "shortcut will not show")
+    return failures
+
+
 def run():
     """Register and unregister the addon, reporting anything that breaks."""
     failures = []
@@ -62,6 +109,8 @@ def run():
 
     if not hasattr(bpy.ops.sequencer, "perspective_activate"):
         failures.append("sequencer.perspective_activate operator is missing")
+
+    failures.extend(_check_menu_operator_context(addon))
 
     # Gizmo and GizmoGroup subclasses are not exposed through bpy.types, so
     # registration is confirmed by the fact that registering again is refused.

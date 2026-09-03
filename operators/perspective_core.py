@@ -16,8 +16,8 @@ def get_visible_range(strip):
     Return the strip's visible (start, end) frame range.
 
     Blender 5.x deprecates frame_final_start and frame_final_end for removal in
-    6.0. content_start plus the handle offsets is the replacement, and was
-    verified to reproduce the old values exactly, including for trimmed strips.
+    6.0. content_start plus the handle offsets is the replacement, and the two
+    agree exactly, trimmed strips included.
     """
     content_start = getattr(strip, "content_start", None)
     if content_start is not None:

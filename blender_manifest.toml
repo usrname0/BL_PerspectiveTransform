@@ -4,7 +4,7 @@
 # Blender Extension Manifest
 schema_version = "1.0.0"
 id = "BL_PerspectiveTransform"
-version = "2.0.0"
+version = "2.1.0"
 
 name = "BL Perspective Transform"
 tagline = "Corner-pin perspective distortion for the VSE preview"

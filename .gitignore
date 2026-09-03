@@ -207,3 +207,9 @@ tests/_output/
 
 # Blender auto-backups
 *.blend1
+
+# Pre-publish notes (internal, see Blender_Dev/PREPUBLISH.md)
+PREPUBLISH_LOG.md
+FALLBACKS.md
+REFACTOR.md
+HISTORY.md

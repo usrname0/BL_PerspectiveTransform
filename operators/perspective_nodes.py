@@ -24,13 +24,16 @@ from mathutils import Vector
 # can still be handled unambiguously. Stored on the node group rather than the
 # modifier because modifier names are user-editable.
 GROUP_TAG = "bl_perspective_transform"
+
+# Stamped into the tag so a later version can recognize the groups this one
+# wrote and migrate them. Nothing reads it back yet.
 GROUP_TAG_VERSION = 1
 
 MODIFIER_NAME = "Perspective"
 
 # Corner ordering used throughout the addon: bottom-left, top-left, top-right,
-# bottom-right, walking anticlockwise from the origin. The tuple maps that order
-# onto the Corner Pin node's own socket names.
+# bottom-right, walking counterclockwise from the origin. The tuple maps that
+# order onto the Corner Pin node's own socket names.
 CORNER_SOCKETS = ("Lower Left", "Upper Left", "Upper Right", "Lower Right")
 
 CORNER_LABELS = ("Bottom Left", "Top Left", "Top Right", "Bottom Right")
@@ -357,10 +360,8 @@ def clear(strip, scene):
     with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
         strip.modifiers.remove(modifier)
 
-    # Drop the datablock only once nothing else points at it. count_group_users
-    # is used rather than group.users because Blender does not decrement its own
-    # count when a strip modifier goes away, so the node group would leak on
-    # every clear.
+    # Drop the datablock only once nothing else points at it. Blender's own
+    # group.users cannot answer that here - see count_group_users.
     if group is not None and count_group_users(group) == 0:
         bpy.data.node_groups.remove(group)
         # The node group was the action's only user, so without this the keys

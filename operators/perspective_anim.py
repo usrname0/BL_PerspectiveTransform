@@ -18,14 +18,12 @@ Two things Blender cannot do on its own, and this module supplies:
     and simply snaps back on the next frame, tearing the transform apart. The
     same remap has to be applied to the stored key values.
 
-Measured in 5.1.2 - see DEV.md -> Keyframing:
+Two more facts this module is built on:
 
   * socket.keyframe_insert("default_value") animates the rendered result
-  * auto-key never fires on a plain RNA write (0 keys inserted with it enabled)
   * the headroom remap is exactly  new = origin + (old - origin) / factor,
     which is axis separable and independent of rotation, mirror, offset,
-    source size and resolution. Verified over 1458 transform combinations,
-    worst error 9.5e-7 in pin space, so each fcurve remaps on its own and
+    source size and resolution - so each fcurve remaps on its own, and the
     bezier handles remap with it.
 """
 
@@ -162,26 +160,22 @@ def autokey_corner(strip, scene, index, tool_settings=None):
     """
     Key the corner that just moved, if the user has auto-keying switched on.
 
-    Called when a handle drag finishes, and deliberately keys *only* the
-    dragged corner. Keying all four is defensible - the quad is one shape, and
-    it is what Blender does for a whole transform - but it surprises people:
-    dragging one handle silently commits the other three to the timeline, and
-    the extra channels then have to be found and deleted by hand. Auto-key on
-    any other property in Blender keys the thing you touched, and this now
-    matches.
+    Called when a handle drag finishes, and keys *only* the dragged corner,
+    which is how auto-key behaves for every other property in Blender.
 
-    The consequence to be aware of is the ordinary one for an unanimated
-    property: an untouched corner stays a constant applying to every frame, so
-    its current value holds across frames the user has already posed.
+    The consequence is the ordinary one for an unanimated property: an
+    untouched corner stays a constant applying to every frame, so its current
+    value holds across frames the user has already posed.
 
     Args:
         strip: the strip being edited
         scene: the sequencer scene, which supplies the frame to key at
         index: corner index in perspective_nodes.CORNER_SOCKETS order
         tool_settings: where to read the auto-key flag from. Pass
-            context.tool_settings: the toggle in the UI writes to the *window*
-            scene, which since 5.0 need not be the sequencer scene, so reading
-            scene.tool_settings can miss it. Falls back to the scene's own.
+            context.tool_settings: the UI's toggle writes the *window* scene's
+            copy, which since 5.0 need not be the sequencer scene. Falling back
+            to the scene's own is a last resort and can disagree with what the
+            user has switched on.
 
     Returns:
         int: how many corners were keyed, 0 when auto-keying is off

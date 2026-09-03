@@ -14,21 +14,9 @@ import bpy
 from bpy.types import WorkSpaceTool
 from pathlib import Path
 
-from .gizmos import (PERSPECTIVE_GGT_perspective_handles,
-                     PERSPECTIVE_GT_perspective_handle,
-                     register_perspective_handles_gizmo,
+from .gizmos import (register_perspective_handles_gizmo,
                      unregister_perspective_handles_gizmo)
 from .operators.perspective_operators import classes as operator_classes
-
-bl_info = {
-    "name": "BL Perspective Transform",
-    "description": "Corner-pin perspective transforms for Blender's Video Sequence Editor",
-    "author": "usrname0",
-    "version": (2, 0, 0),
-    "blender": (5, 0, 0),
-    "location": "Sequencer > Preview > Toolbar",
-    "category": "Sequencer",
-}
 
 TOOL_IDNAME = "sequencer.perspective_handles_tool"
 
@@ -42,14 +30,13 @@ addon_keymaps = []
 # should follow ours to a higher bl_order. bl_order is read into the C
 # PanelType at registration, so they have to be re-registered for it to count.
 #
-# [measured] 5.2.1: re-registering a panel that a third-party sub-panel is
-# parented to does not orphan the child - bl_parent_id resolves by name at draw
-# time - and the panels come back with their state intact.
+# Re-registering a stock panel does not orphan a third-party sub-panel parented
+# to it, because bl_parent_id resolves by name at draw time.
 #
-# The one limitation, also measured: a Properties region bakes panel order into
-# itself when it first builds the list, so this only lands if it runs before
-# the Strip tab has been drawn. That is the normal case, since extensions
-# register at startup; enabling the addon by hand while that tab is open leaves
+# WARNING: this only lands if it runs before the Strip tab has first been
+# drawn. A Properties region bakes panel order into its own data the first time
+# it builds the list. Extensions register at startup, so the normal case is
+# covered; enabling the addon by hand with that tab already open leaves
 # Perspective at the bottom until Blender restarts.
 PANELS_AFTER_PERSPECTIVE = (
     "STRIP_PT_adjust_video",
@@ -68,6 +55,53 @@ PANEL_ORDER_AFTER = 10
 _reordered_panels = []
 
 
+def _write_bl_order(cls, order):
+    """Set a panel's bl_order class attribute, or remove it for an order of None."""
+    if order is None:
+        if "bl_order" in cls.__dict__:
+            del cls.bl_order
+    else:
+        cls.bl_order = order
+
+
+def _reregister_with_order(cls, order):
+    """
+    Re-register a panel so a changed bl_order takes effect.
+
+    bl_order is read into the C PanelType at registration, so the class
+    attribute has to be changed between an unregister and a register.
+
+    WARNING: the gap between those two calls must not be abandoned. A panel
+    left unregistered is gone from Blender's UI until a restart, and these are
+    Blender's own panels, not ours - so a register that fails puts the previous
+    order back and registers that instead of giving up.
+
+    Args:
+        cls: the panel class to re-register
+        order: the bl_order to apply, or None to remove the attribute
+
+    Returns:
+        bool: True if the panel is now registered with the requested order
+    """
+    previous = cls.__dict__.get("bl_order")
+    try:
+        bpy.utils.unregister_class(cls)
+    except (RuntimeError, ValueError):
+        return False  # still registered exactly as it was; nothing to undo
+
+    try:
+        _write_bl_order(cls, order)
+        bpy.utils.register_class(cls)
+        return True
+    except (RuntimeError, ValueError, AttributeError):
+        _write_bl_order(cls, previous)
+        try:
+            bpy.utils.register_class(cls)
+        except (RuntimeError, ValueError):
+            pass  # the panel cannot be recovered; a restart brings it back
+        return False
+
+
 def _order_panels_after_perspective():
     """Push the stock strip panels that belong below ours to a higher bl_order."""
     for name in PANELS_AFTER_PERSPECTIVE:
@@ -75,27 +109,14 @@ def _order_panels_after_perspective():
         if cls is None:
             continue  # a future Blender renamed or dropped it; order is cosmetic
         original = cls.__dict__.get("bl_order")
-        try:
-            bpy.utils.unregister_class(cls)
-            cls.bl_order = PANEL_ORDER_AFTER
-            bpy.utils.register_class(cls)
-        except (RuntimeError, ValueError):
-            continue
-        _reordered_panels.append((cls, original))
+        if _reregister_with_order(cls, PANEL_ORDER_AFTER):
+            _reordered_panels.append((cls, original))
 
 
 def _restore_panel_order():
     """Undo _order_panels_after_perspective, leaving Blender's UI as found."""
     for cls, original in reversed(_reordered_panels):
-        try:
-            bpy.utils.unregister_class(cls)
-            if original is None:
-                del cls.bl_order
-            else:
-                cls.bl_order = original
-            bpy.utils.register_class(cls)
-        except (RuntimeError, ValueError, AttributeError):
-            continue
+        _reregister_with_order(cls, original)
     _reordered_panels.clear()
 
 
@@ -138,12 +159,19 @@ class PERSPECTIVE_TOOL_perspective_handles(WorkSpaceTool):
 def _menu_transform(self, context):
     """Add the tool to the preview Transform menus."""
     if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
+        # Menu.append() restores the default operator context after every
+        # appended function, so the menu's own INVOKE_REGION_PREVIEW is gone
+        # by the time this runs. Without it the shortcut lookup asks the
+        # timeline region, finds nothing, and the entry draws without its "P".
+        self.layout.operator_context = 'INVOKE_REGION_PREVIEW'
         self.layout.operator("sequencer.perspective_activate", text="Perspective")
 
 
 def _menu_clear(self, context):
     """Add the clear operator to the preview Clear menu."""
     if context.space_data.view_type in {'PREVIEW', 'SEQUENCER_PREVIEW'}:
+        # Same reason as _menu_transform: this is what shows the "Alt P".
+        self.layout.operator_context = 'INVOKE_REGION_PREVIEW'
         self.layout.operator("sequencer.perspective_clear", text="Perspective")
 
 

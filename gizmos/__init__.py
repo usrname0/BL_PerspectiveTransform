@@ -1,7 +1,8 @@
 """
-BL Perspective Transform - Gizmos Module
+BL Perspective Transform - Gizmos.
 
-This module contains all gizmo implementations for the perspective transform functionality.
+The corner handle, the group that places the four of them, and their
+registration, re-exported for the addon's register().
 """
 
 from .perspective_handles_gizmo import (
@@ -11,7 +12,6 @@ from .perspective_handles_gizmo import (
     unregister_perspective_handles_gizmo
 )
 
-# Export everything needed by the main __init__.py
 __all__ = [
     'PERSPECTIVE_GT_perspective_handle',
     'PERSPECTIVE_GGT_perspective_handles',

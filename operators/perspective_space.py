@@ -5,21 +5,20 @@ The Corner Pin compositor node lives inside the strip's own image, so its four
 control points are expressed as normalized coordinates on the *source image*
 before Blender applies crop, flip, or the strip transform.
 
-Blender's evaluation order was established by rendering test frames and fitting
-the model to the measured result (see tests/test_space.py):
+Blender applies the transform in this order:
 
     corner pin -> place source rect in frame -> scale/rotate about origin
-               -> offset -> mirror about the frame centre
+               -> offset -> mirror about the frame center
 
-Three details are worth stating because guessing any of them wrongly produces
-handles that drift, and each was measured rather than assumed:
+Three details are worth stating, because guessing any of them wrongly produces
+handles that drift:
 
-  * Mirroring is applied *last*, about the centre of the render frame - not in
+  * Mirroring is applied *last*, about the center of the render frame - not in
     the strip's own image space. With rotation this is what makes a single
     mirror appear to reverse the rotation direction; expressed in this order no
     sign-flip special case is needed.
   * Crop has *no* geometric effect. It clips pixels but never moves or
-    recentres the image, so it does not appear in this matrix at all.
+    recenters the image, so it does not appear in this matrix at all.
   * Placement and the scale/rotation pivot both use the full, uncropped source
     rectangle.
 
@@ -146,7 +145,7 @@ def pin_to_frame_matrix(strip, scene):
     # pin space [0,1] -> source image pixels
     m = _scale(src_w, src_h)
 
-    # the full source rect sits centred in the render frame at scale 1
+    # the full source rect sits centered in the render frame at scale 1
     corner_x = res_x * 0.5 - src_w * 0.5
     corner_y = res_y * 0.5 - src_h * 0.5
     m = _translation(corner_x, corner_y) @ m
@@ -161,7 +160,7 @@ def pin_to_frame_matrix(strip, scene):
     m = about_pivot @ m
     m = _translation(offset_x, offset_y) @ m
 
-    # mirroring happens last, about the centre of the render frame
+    # mirroring happens last, about the center of the render frame
     if flip_x:
         m = (_translation(res_x, 0.0) @ _scale(-1.0, 1.0)) @ m
     if flip_y:
@@ -177,14 +176,11 @@ def frame_to_pin_matrix(strip, scene):
 
 def apply(matrix, point):
     """
-    Apply a 3x3 homogeneous matrix to a 2D point.
+    Apply a 3x3 homogeneous matrix to a 2D point, dividing through by w.
 
-    Args:
-        matrix: 3x3 mathutils.Matrix
-        point: any 2-sequence of floats
-
-    Returns:
-        mathutils.Vector: the transformed 2D point
+    The matrices this module composes are affine, so w is always 1. The guard
+    is for a matrix that is not, where an unguarded divide would raise instead
+    of returning a point.
     """
     result = matrix @ Vector((float(point[0]), float(point[1]), 1.0))
     if abs(result.z) > 1e-12:
@@ -192,43 +188,11 @@ def apply(matrix, point):
     return Vector((result.x, result.y))
 
 
-def pin_to_frame(strip, scene, pin_points):
-    """
-    Map pin-space points to frame space.
-
-    Args:
-        strip: the VSE strip
-        scene: the scene providing render resolution
-        pin_points: iterable of 2-sequences in normalized pin space
-
-    Returns:
-        list[mathutils.Vector]: the points in frame-space pixels
-    """
-    matrix = pin_to_frame_matrix(strip, scene)
-    return [apply(matrix, p) for p in pin_points]
-
-
-def frame_to_pin(strip, scene, frame_points):
-    """
-    Map frame-space points back to pin space.
-
-    Args:
-        strip: the VSE strip
-        scene: the scene providing render resolution
-        frame_points: iterable of 2-sequences in frame-space pixels
-
-    Returns:
-        list[mathutils.Vector]: the points in normalized pin space
-    """
-    matrix = frame_to_pin_matrix(strip, scene)
-    return [apply(matrix, p) for p in frame_points]
-
-
 # Smallest accepted cross product between adjacent edges of the pin quad, in
 # pin-space units squared. Measured on 5.2.1 by rendering a quad swept towards
 # collinearity: the render stayed sane down to 1e-4, where the image had
 # degenerated to 17 percent frame coverage, and collapsed to an empty frame at
-# exactly 0. See DEV.md -> Convexity.
+# exactly 0.
 CONVEX_EPSILON = 1e-4
 
 
@@ -240,7 +204,7 @@ def is_convex_quad(corners, epsilon=CONVEX_EPSILON):
     so Blender's Corner Pin has no solution for a concave or self-intersecting
     one. It does not fail cleanly either: measured on 5.2.1, every concave quad
     rendered a frame filled edge to edge with garbage, and the collinear case
-    rendered an empty frame - see DEV.md -> Corner Pin.
+    rendered an empty frame.
 
     Walking the quad, the cross product of each pair of adjacent edges holds a
     single sign exactly when the polygon is convex and simple; a bow-tie

@@ -26,6 +26,8 @@ from ..operators.perspective_core import is_strip_visible_at_frame
 
 TOOL_IDNAME = "sequencer.perspective_handles_tool"
 
+# Region pixels. A handle is drawn small enough not to hide the corner it
+# marks, and grabbed from a good deal further out than it is drawn.
 HANDLE_RADIUS = 6.0
 SELECT_RADIUS = 25.0
 
@@ -40,7 +42,7 @@ def _frame_to_region(view2d, scene, point):
     """
     Convert a frame-space point to region pixels.
 
-    The preview's View2D is centred on the frame, so frame coordinates are
+    The preview's View2D is centered on the frame, so frame coordinates are
     shifted by half the render resolution before conversion.
     """
     view_x = point[0] - scene.render.resolution_x * 0.5
@@ -79,7 +81,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     bl_target_properties = ()
 
     def setup(self):
-        """Initialise handle state and the flags that keep it visible."""
+        """Initialize handle state and the flags that keep it visible."""
         self.handle_index = 0
         # use_draw_modal keeps draw() running during a drag. There is no
         # use_draw_select property on Gizmo, and draw_select() is only called
@@ -143,10 +145,10 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         of them change while a single corner is being dragged.
 
         The cursor position is captured too, because the drag moves the corner
-        by how far the cursor has travelled rather than to where it points -
-        see _drag_to. One consequence is worth knowing: the handle no longer
-        jumps under the cursor when it is grabbed from up to SELECT_RADIUS
-        away, it moves relative to where it already was.
+        by how far the cursor has traveled rather than to where it points - see
+        _drag_to. One consequence: a handle grabbed from up to SELECT_RADIUS
+        away moves relative to where it already was rather than jumping under
+        the cursor.
         """
         scene = nodes.get_sequencer_scene(context)
         strip = nodes.get_active_strip(context)
@@ -165,11 +167,9 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         if event.type == 'MOUSEMOVE':
             self._drag_to(context, event.mouse_region_x, event.mouse_region_y)
             return {'RUNNING_MODAL'}
-        # The end-of-drag work is deliberately NOT done here. Blender's gizmo
-        # tweak operator converts the confirming mouse release through its own
-        # modal keymap, so this branch is not reliably reached; exit() is the
-        # hook Blender always calls when the modal ends. Returning FINISHED
-        # here still routes through exit(cancel=False), so both paths agree.
+        # WARNING: the end-of-drag work belongs in exit(), not here - this
+        # branch is not reliably reached. Returning FINISHED routes through
+        # exit(cancel=False), so both paths agree. See _finish_edit.
         if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
             return {'FINISHED'}
         if event.type in {'ESC', 'RIGHTMOUSE'}:
@@ -191,32 +191,25 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
 
     def _drag_to(self, context, region_x, region_y):
         """
-        Move this corner by however far the cursor travelled since the last event.
+        Move this corner by however far the cursor traveled since the last event.
 
-        The corner is *not* placed where the cursor points, and that is the
-        whole point. A move that would make the quad concave, self-intersecting
-        or degenerate has to be turned down - the Corner Pin solver cannot
-        express such a quad and renders a blank or garbage frame instead of
-        failing - but turning down an absolute position means the cursor keeps
-        travelling while the corner sits still, and every pixel of that
-        invisible travel has to be dragged back before the corner moves again.
-        The handle feels stuck to a wall that is not there.
+        WARNING: accumulate deltas onto the last accepted position; never place
+        the corner at the cursor's absolute position. A move breaking convexity
+        has to be refused, and refusing an absolute position leaves the cursor
+        traveling on while the corner sits still - every pixel of that
+        invisible travel then has to be dragged back before the corner moves
+        again. With deltas the corner stops at the boundary and moves again on
+        the first mouse move back off it.
 
-        Accumulating deltas onto the last accepted position removes that
-        entirely: the corner stops at the boundary, and the very first mouse
-        move back off it moves the corner again. Where the quad is not
-        constrained this is identical to following the cursor, because the
-        deltas simply sum to the cursor's travel. The cost is that after being
-        held at a boundary the handle sits offset from the cursor; exit()
-        already warps the cursor back onto the handle when the drag ends.
-
-        A move refused outright is then tried one axis at a time, so a drag
-        running along the boundary keeps making the progress it can instead of
-        stopping dead the moment any part of it is disallowed.
+        Two consequences. The handle sits offset from the cursor after being
+        held at a boundary, and exit() warps it back when the drag ends. And a
+        move refused outright is retried one axis at a time, so a drag running
+        along the boundary keeps making the progress it can rather than stopping
+        dead.
 
         This relies on event.mouse_region_x staying continuous under
-        use_grab_cursor, which it does - the absolute positions this used to
-        read would have jumped at every cursor wrap otherwise.
+        use_grab_cursor, which it does; absolute positions would jump at every
+        cursor wrap.
         """
         if self._edit_node is None or context.region is None or self._last_mouse is None:
             return
@@ -285,10 +278,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         """
         Close out the drag: restore or commit, then put the cursor back.
 
-        This is the only end-of-drag hook Blender guarantees to call, so both
-        the cancel path and the confirm path are driven from here rather than
-        from modal(). Both are safe to run twice, in case modal() did reach its
-        own branch first.
+        Both paths are safe to run twice, in case modal() reached its own
+        branch first.
         """
         if cancel:
             self._restore(context)
