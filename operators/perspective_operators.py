@@ -219,21 +219,6 @@ class STRIP_PT_perspective(bpy.types.Panel):
             box.label(text="Corners do not form a convex shape", icon='ERROR')
             box.label(text="This cannot be rendered; move a corner back")
 
-        # Dragging a keyed corner with auto-key off looks like it worked and is
-        # undone on the next frame change. Say so rather than let it puzzle people.
-        #
-        # WARNING: read this flag from the context, never from the sequencer
-        # scene. tool_settings is per-scene and the UI's toggle writes the
-        # window scene's copy, which since 5.0 need not be the scene the
-        # sequencer is showing. Reading the wrong one inverts this warning - it
-        # shows when auto-keying is on, and hides when it is off.
-        if anim.is_animated(strip):
-            tool_settings = getattr(context, "tool_settings", None)
-            if tool_settings is not None and not tool_settings.use_keyframe_insert_auto:
-                box = layout.box()
-                box.label(text="Corners are keyframed", icon='ANIM')
-                box.label(text="Turn on auto-keying, or edits revert on frame change")
-
         if core.needs_headroom(strip):
             box = layout.box()
             box.label(text="Corners are at the image edge", icon='INFO')

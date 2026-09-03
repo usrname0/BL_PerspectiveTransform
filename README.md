@@ -11,10 +11,6 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 Corners can be dragged anywhere within the strip's geometry, which can
 be scaled out of bounds, rotated, cropped, etc. as usual.
 
-A corner will not drag into a shape the perspective cannot be solved for - pull
-one past its neighbours and the handle stops at the limit rather than letting
-the strip render blank. Drag back and it picks up again straight away.
-
 ![An extreme corner-pin with headroom added](./examples/demo_complex.png)
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
@@ -28,19 +24,13 @@ load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
 
 Corners animate the way the rest of Blender does.
 
-- Turn on **auto-keying** and drag a handle. The corner you dragged is keyed at
-  the current frame, so move to another frame, drag it again, and it
-  interpolates. Only that corner is keyed - the others are left alone.
+- Turn on **auto-keying** and drag a handle.
 - Or key by hand: click the dot beside any value in the Perspective panel.
 - The keys appear in the **Dope Sheet** under your scene, in a channel named
   after the strip, and retime like any other animation.
 
-Turning auto-keying on matters. Once a corner is keyframed it is driven by its
-curve, so dragging it without auto-keying looks like it worked and then reverts
-on the next frame change - the panel says so when that is the situation.
-
-**Reset** clears the corner animation along with the shape. **Add Headroom**
-moves every keyframe with it, so an animated transform stays put.
+**Reset** clears the corner animation along with the shape. 
+**Add Headroom** moves every keyframe with it, so an animated transform stays put.
 
 ![Text and other visual strips work too](./examples/demo_texttoo.png)
 

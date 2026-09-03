@@ -136,10 +136,16 @@ def run():
             failures.append(f"{name} survived unregister()")
 
     # Blender's own panels are not ours to keep. Every one we pushed has to go
-    # back to the bl_order it had, which for all of them is none at all.
+    # back to the bl_order it had - which for all of them is none at all - and
+    # has to still be registered. Restoring the order means unregistering the
+    # class and registering it again, so a failure in between takes one of
+    # Blender's own panels out of the UI until the next restart. Check for the
+    # class first: `cls is None` is that failure, not an absence to skip past.
     for name in addon.PANELS_AFTER_PERSPECTIVE:
         cls = getattr(bpy.types, name, None)
-        if cls is not None and "bl_order" in cls.__dict__:
+        if cls is None:
+            failures.append(f"{name} did not survive being put back after unregister()")
+        elif "bl_order" in cls.__dict__:
             failures.append(f"{name} kept the bl_order we gave it after unregister()")
 
     return failures
