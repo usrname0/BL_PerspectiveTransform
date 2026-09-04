@@ -59,7 +59,7 @@ nodes = importlib.import_module(addon.__name__ + ".operators.perspective_nodes")
 space = importlib.import_module(addon.__name__ + ".operators.perspective_space")
 
 # Draw the panel open, so the corner rows are there to grab.
-operators.STRIP_PT_perspective.bl_options = set()
+operators.PERSPECTIVE_PT_perspective.bl_options = set()
 addon.register()
 
 # Corner 2 across at x=0.35. From identity no single field can reach a concave

@@ -44,7 +44,7 @@ defaults = importlib.import_module(addon.__name__ + ".operators.perspective_defa
 nodes = importlib.import_module(addon.__name__ + ".operators.perspective_nodes")
 
 # Draw the panel open, so the corner rows are in the shot.
-operators.STRIP_PT_perspective.bl_options = set()
+operators.PERSPECTIVE_PT_perspective.bl_options = set()
 addon.register()
 
 OUT = os.path.join(REPO, "tests", "_output")
@@ -102,7 +102,7 @@ def write_through_placeholder():
           getattr(bpy.context, "active_strip", None) is not None)
     print("  has perspective before the write:", nodes.has_perspective(strip))
 
-    bpy.context.window_manager.perspective_transform.upper_right = (0.80, 0.90)
+    bpy.context.window_manager.bl_perspective_transform_defaults.upper_right = (0.80, 0.90)
 
     print("  has perspective after the write :", nodes.has_perspective(strip))
     print("  handover open after the write   :", defaults.is_handing_over())

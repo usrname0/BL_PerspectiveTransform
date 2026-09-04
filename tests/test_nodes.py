@@ -137,7 +137,7 @@ def check_panel_defaults(source, failures):
     """
     The panel's placeholder values must read identity and create on first write.
 
-    STRIP_PT_perspective draws these whenever a strip has no transform, so that
+    PERSPECTIVE_PT_perspective draws these whenever a strip has no transform, so that
     the corners and the filter are visible at their defaults the way Blender's
     own Transform panel shows its own. They store nothing: reading asks the
     strip, and writing builds the node group.

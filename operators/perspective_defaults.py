@@ -1,7 +1,7 @@
 """
 BL Perspective Transform - the values the panel shows before a strip has one.
 
-STRIP_PT_perspective shows the filter and the four corners at all times, the way
+PERSPECTIVE_PT_perspective shows the filter and the four corners at all times, the way
 Blender's own Transform and Crop panels show theirs. Those values live in a
 Corner Pin node, and that node only exists once a strip actually has a
 perspective, so something has to stand in until then. These properties are it:
@@ -33,8 +33,13 @@ from bpy.props import EnumProperty, FloatVectorProperty, PointerProperty
 from . import perspective_nodes as nodes
 from . import perspective_space as space
 
-# Where the pointer lands: context.window_manager.perspective_transform
-WM_PROPERTY = "perspective_transform"
+# Where the pointer lands:
+#   context.window_manager.bl_perspective_transform_defaults
+#
+# WindowManager is shared by every addon, so this carries the same
+# bl_perspective_transform prefix as perspective_nodes.GROUP_TAG rather than
+# a bare name another addon could plausibly pick too.
+WM_PROPERTY = "bl_perspective_transform_defaults"
 
 # How long the panel keeps drawing placeholder rows after one has been written.
 #
@@ -199,7 +204,7 @@ def _corner_property(index):
         # across the square's diagonal. Narrow, but it is the guard being
         # consistent rather than absent. Once the strip has a transform the
         # panel binds to the sockets, and nothing in Python sits between the
-        # slider and the value - see STRIP_PT_perspective's warning.
+        # slider and the value - see PERSPECTIVE_PT_perspective's warning.
         constrained = space.constrain_corner(corners, index, value)
         if constrained is None:
             return

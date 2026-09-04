@@ -47,7 +47,7 @@ operators = importlib.import_module(addon.__name__ + ".operators.perspective_ope
 nodes = importlib.import_module(addon.__name__ + ".operators.perspective_nodes")
 
 # Draw the panel open, so the corner labels are in the shot too.
-operators.STRIP_PT_perspective.bl_options = set()
+operators.PERSPECTIVE_PT_perspective.bl_options = set()
 addon.register()
 
 OUT = os.path.join(REPO, "tests", "_output", "panel_order.png")

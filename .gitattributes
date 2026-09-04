@@ -1,0 +1,14 @@
+# The package is built from the working tree, so the working tree decides what
+# line endings ship. Git already stores every text file here as LF, but this
+# machine runs core.autocrlf=true, which hands CRLF back on checkout - and
+# prepublish.py then reports mixed line endings inside the zip. Pin it.
+* text=auto eol=lf
+
+# Binary, never converted. Only perspective.dat ships; the rest are sources and
+# README assets that paths_exclude_pattern keeps out of the package.
+*.dat  binary
+*.blend binary
+*.blend1 binary
+*.png  binary
+*.gif  binary
+*.mp4  binary

@@ -91,7 +91,7 @@ def run():
     for name in ("SEQUENCER_OT_perspective_activate",
                  "SEQUENCER_OT_perspective_reset",
                  "SEQUENCER_OT_perspective_clear",
-                 "STRIP_PT_perspective"):
+                 "PERSPECTIVE_PT_perspective"):
         if not hasattr(bpy.types, name):
             failures.append(f"{name} was not registered")
 
@@ -138,7 +138,7 @@ def run():
         return failures
 
     # Unregistering must leave nothing behind, or a reload stacks duplicates.
-    for name in ("STRIP_PT_perspective", "SEQUENCER_OT_perspective_activate"):
+    for name in ("PERSPECTIVE_PT_perspective", "SEQUENCER_OT_perspective_activate"):
         if hasattr(bpy.types, name):
             failures.append(f"{name} survived unregister()")
 

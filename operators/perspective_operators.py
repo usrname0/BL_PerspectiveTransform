@@ -11,7 +11,7 @@ Clear is on Image > Clear and Alt P. Make Convex is the exception: it is a butto
 in the panel's own warning box, because that warning is the only thing that ever
 calls for it.
 
-STRIP_PT_perspective is the numeric view of the same state, and lives in the
+PERSPECTIVE_PT_perspective is the numeric view of the same state, and lives in the
 Properties editor beneath Blender's own Crop. See the addon's register() for
 how it gets placed there, since panel order is not something a panel can ask
 for on its own.
@@ -186,14 +186,21 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class STRIP_PT_perspective(bpy.types.Panel):
+class PERSPECTIVE_PT_perspective(bpy.types.Panel):
     """
     Strip properties panel, sitting directly beneath Blender's own Crop.
 
     This is the only numeric UI the addon has.
+
+    The PERSPECTIVE_ prefix rather than the STRIP_PT_ that Blender's own strip
+    panels use: bpy.types is one flat namespace shared with Blender and with
+    every other addon, and a panel drawn in the Strip tab is under no obligation
+    to sit in Blender's prefix. Nothing in 5.2 is called STRIP_PT_perspective,
+    but "perspective" is a plausible enough name for Blender to take later, and
+    a clash there is a registration failure, not a cosmetic one.
     """
 
-    bl_idname = "STRIP_PT_perspective"
+    bl_idname = "PERSPECTIVE_PT_perspective"
     bl_label = "Perspective"
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
@@ -288,5 +295,5 @@ classes = (
     SEQUENCER_OT_perspective_reset,
     SEQUENCER_OT_perspective_clear,
     SEQUENCER_OT_perspective_make_convex,
-    STRIP_PT_perspective,
+    PERSPECTIVE_PT_perspective,
 )
