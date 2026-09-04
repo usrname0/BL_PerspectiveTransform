@@ -221,12 +221,22 @@ def test_predicate_separates_the_shapes():
     return failures
 
 
-def test_drag_refuses_to_enter_a_concave_shape():
+def test_a_drag_cannot_enter_a_concave_shape():
     """
-    The gizmo's drag step must reject a move that breaks convexity.
+    The gizmo's drag step must never leave the quad non-convex.
 
     This calls the gizmo's own _drag_to, so it fails if the guard is removed
-    from the drag path even while is_convex_quad itself still works.
+    from the drag path even while is_convex_quad and constrain_corner both
+    still work.
+
+    Asserted as the property rather than as a position. The guard used to
+    refuse such a move whole and the corner stayed exactly where it was, which
+    a test could pin to a number; it now slides to the nearest position that
+    keeps the quad convex, and which number that is belongs to
+    test_constrain_corner_finds_the_nearest_point. What belongs here is that
+    the drag consulted it at all: the shape stays convex, the corner does not
+    reach the concave target, and it went as far as it could - a hair further
+    in and it would not be convex any more.
     """
     nodes = H.import_addon_package_module("operators.perspective_nodes")
     space = H.import_addon_package_module("operators.perspective_space")
@@ -236,17 +246,30 @@ def test_drag_refuses_to_enter_a_concave_shape():
 
     stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
 
-    # Corner 2 is the top right. A valid move first, so the refusal that
-    # follows is measured against a corner that had been moving.
+    # Corner 2 is the top right. A valid move first, so what follows is
+    # measured against a corner that had been moving.
     after = _move_cursor_to(stub, nodes, scene, strip, (0.7, 0.7))
     if after[2] != (0.7, 0.7):
-        failures.append(f"a convex drag was refused, corner 2 is {after[2]}")
+        failures.append(f"a convex drag was constrained, corner 2 is {after[2]}")
 
     # Pulling it to (0.2, 0.2) puts it across the diagonal between its
-    # neighbours, which is the concave case, and must not be written.
-    after = _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
-    if after[2] != (0.7, 0.7):
-        failures.append(f"a concave drag was written anyway, corner 2 is {after[2]}")
+    # neighbours, which is the concave case.
+    _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
+    corners = [tuple(float(v) for v in c) for c in nodes.read_pin(strip)]
+    if not space.is_convex_quad(corners):
+        failures.append(f"a concave drag was written anyway, the pin is {corners}")
+    if corners[2][0] < 0.25 and corners[2][1] < 0.25:
+        failures.append(f"the corner reached the concave target, it is {corners[2]}")
+
+    # On the wall, not short of it. Measured on 5.2.1 the corner lands at
+    # (0.5001, 0.5001), where a further 1e-5 towards the target is already
+    # rejected - so the smallest nudge this can ask about is a real one.
+    probe = list(corners)
+    probe[2] = (corners[2][0] - 1e-5, corners[2][1] - 1e-5)
+    if space.is_convex_quad(probe):
+        failures.append(
+            f"the corner stopped short of the boundary at {corners[2]}; a further "
+            "1e-5 towards the target is still convex, so it is not the nearest point")
 
     return failures
 
@@ -262,6 +285,12 @@ def test_the_handle_moves_again_the_moment_the_drag_reverses():
     before anything happens. It reads as having invisibly dragged yourself into
     a hole. Accumulating travel onto the last accepted position is what fixes
     it, and this test is the reason to keep doing that.
+
+    Projecting the target rather than refusing it does not change that
+    argument: the corner is still held on the wall while the cursor travels
+    past it, so the accumulation is still what keeps the excursion from piling
+    up. The assertion is the property rather than the position - reversing by a
+    hair moves the corner by the whole of that hair, with nothing swallowed.
     """
     nodes = H.import_addon_package_module("operators.perspective_nodes")
     space = H.import_addon_package_module("operators.perspective_space")
@@ -274,29 +303,41 @@ def test_the_handle_moves_again_the_moment_the_drag_reverses():
 
     # Well past the boundary: under absolute placement this is where the
     # invisible travel would pile up.
-    held = _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
-    if held[2] != (0.7, 0.7):
-        failures.append(f"the corner should be held at (0.7, 0.7), it is {held[2]}")
+    _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
+    held = tuple(float(v) for v in nodes.read_pin(strip)[2])
+    if held[0] < 0.25 and held[1] < 0.25:
+        failures.append(f"the corner followed the cursor into the concave target: {held}")
 
     # Now reverse by a hair. The cursor is still deep inside the disallowed
     # region, so an absolute reading would refuse this too and the corner would
-    # sit there for another 0.5 of travel.
-    after = _move_cursor_to(stub, nodes, scene, strip, (0.25, 0.25))
-    if after[2] != (0.75, 0.75):
+    # sit there for another 0.3 of travel.
+    _move_cursor_to(stub, nodes, scene, strip, (0.25, 0.25))
+    after = tuple(float(v) for v in nodes.read_pin(strip)[2])
+    moved = (after[0] - held[0], after[1] - held[1])
+    if abs(moved[0] - 0.05) > 1e-3 or abs(moved[1] - 0.05) > 1e-3:
         failures.append(
-            f"reversing the drag did not move the corner immediately: {after[2]}, "
-            "expected (0.75, 0.75)")
+            f"reversing the drag by (0.05, 0.05) moved the corner by {moved}; off "
+            "the wall it should follow the cursor one for one")
 
     return failures
 
 
 def test_a_drag_along_the_boundary_keeps_moving():
     """
-    A move refused whole must still be tried one axis at a time.
+    A drag at a shallow angle into the boundary must keep making progress.
 
-    Without this, a drag running at a shallow angle into the boundary is
-    refused on every single event - the user is mostly moving parallel to it,
-    and the handle stops dead anyway.
+    The user is mostly moving parallel to the wall, so nearly every event has
+    somewhere legal to go. What the guard used to do was refuse the move whole
+    and retry X alone and then Y alone, which is a coarse approximation of the
+    projection and agrees with it only where the boundary is axis-aligned.
+    Measured on 5.2.1 with Upper Left pulled across to x=0.35, so the wall
+    Upper Right meets runs at no axis's angle: 60 events of (-0.020, -0.012)
+    moved nothing on 36 of them under the axis retries and the handle crawled.
+    Under the projection all 60 move.
+
+    The count is the assertion, not the destination. A drag that stops dead is
+    the failure being prevented, and where 60 events of sliding end up is the
+    projection's business.
     """
     nodes = H.import_addon_package_module("operators.perspective_nodes")
     space = H.import_addon_package_module("operators.perspective_space")
@@ -304,30 +345,42 @@ def test_a_drag_along_the_boundary_keeps_moving():
     scene, strip = _setup("convex_slide")
     failures = []
 
+    # Convex, so the guard is armed rather than in its "do not make it worse"
+    # escape case, and the wall it raises for corner 2 is diagonal.
+    nodes.write_pin(strip, scene, ((0.0, 0.0), (0.35, 1.0), (1.0, 1.0), (1.0, 0.0)))
     stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
-    _move_cursor_to(stub, nodes, scene, strip, (0.6, 0.6))
 
-    # Mostly leftwards, slightly up. The whole move crosses the boundary and so
-    # does the x half of it, but the y half does not, so the corner should
-    # travel up rather than stop.
-    after = _move_cursor_to(stub, nodes, scene, strip, (0.1, 0.7))
-    if after[2] != (0.6, 0.7):
+    steps = 60
+    moved = _walk(stub, nodes, scene, strip, 2,
+                  (1.0 - steps * 0.020, 1.0 - steps * 0.012), steps=steps)
+    if moved != steps:
         failures.append(
-            f"a shallow drag along the boundary gave {after[2]}, expected (0.6, 0.7)")
+            f"a shallow drag into a diagonal boundary moved on {moved} of {steps} "
+            "events; it should slide along the wall rather than stall against it")
+    if not space.is_convex_quad(nodes.read_pin(strip)):
+        failures.append("sliding along the boundary left the quad non-convex")
 
     return failures
 
 
-def test_a_refused_drag_renders_the_shape_it_stopped_at():
+def test_a_constrained_drag_still_renders():
     """
-    The guard has to hold the last good *render*, not just the last good value.
+    The guard has to hold a usable *render*, not just a value the predicate likes.
 
     The failure this exists to prevent is not a wrong number but an unusable
     frame: measured on 5.2.1 a concave pin renders the whole frame filled edge
-    to edge with garbage. So the strip is first dragged into a strong but valid
-    shape covering about 70 percent of the frame, and the refused drag must
-    leave that render untouched - a full frame would mean the concave value got
-    through, and the identity square would mean the guard reset something.
+    to edge with garbage, and a collinear one renders an empty frame. Coverage
+    alone cannot tell a broken pin from a working one, because an untransformed
+    pin fills the frame too - so the strip is dragged into a strong but valid
+    shape covering about 70 percent first, and the drag into the concave target
+    has to leave something between the two failures.
+
+    This used to assert the render was bit-identical afterwards, which was only
+    available because a refused move left the corner exactly where it was. The
+    corner now slides to the wall, and on the wall the quad is at its thinnest
+    legal shape - measured, 17.4 percent coverage, which is the 1e-4 row of the
+    sweep in DEV.md -> Convexity and was checked there to render correctly. So
+    the assertion is the band: not the empty frame, not the full one.
     """
     import numpy as np
 
@@ -342,17 +395,25 @@ def test_a_refused_drag_renders_the_shape_it_stopped_at():
     good = H.render_scene(scene, "convex_good", frame=1)
     coverage = float((good[..., 3] > 0.5).mean())
     if not 0.6 < coverage < 0.8:
-        failures.append(f"the valid pin should cover about 70% of the frame, got {coverage:.3f}")
+        failures.append(
+            f"the valid pin should cover about 70% of the frame, got {coverage:.3f}")
 
     _move_cursor_to(stub, nodes, scene, strip, (0.2, 0.2))
-    after = H.render_scene(scene, "convex_refused", frame=1)
+    after = H.render_scene(scene, "convex_constrained", frame=1)
+    coverage = float((after[..., 3] > 0.5).mean())
 
     if np.isnan(after).any():
-        failures.append("the refused drag rendered NaNs")
-    if not np.array_equal(good, after):
-        changed = float((np.abs(good - after) > 1e-4).any(axis=2).mean())
+        failures.append("the constrained drag rendered NaNs")
+    if not space.is_convex_quad(nodes.read_pin(strip)):
+        failures.append("the constrained drag left the quad non-convex")
+    if coverage > 0.9:
         failures.append(
-            f"the refused drag changed the render: {changed:.3f} of pixels differ")
+            f"the constrained drag filled {coverage:.3f} of the frame; a concave "
+            "pin renders edge to edge with garbage, an untransformed one fills it too")
+    if coverage < 0.05:
+        failures.append(
+            f"the constrained drag left only {coverage:.3f} of the frame covered; "
+            "a collinear pin renders empty")
 
     return failures
 
@@ -771,10 +832,10 @@ def test_make_convex_overwrites_a_bad_keyframe():
 
 TESTS = (
     test_predicate_separates_the_shapes,
-    test_drag_refuses_to_enter_a_concave_shape,
+    test_a_drag_cannot_enter_a_concave_shape,
     test_the_handle_moves_again_the_moment_the_drag_reverses,
     test_a_drag_along_the_boundary_keeps_moving,
-    test_a_refused_drag_renders_the_shape_it_stopped_at,
+    test_a_constrained_drag_still_renders,
     test_a_drag_escapes_a_shape_it_did_not_make,
     test_constrain_corner_result_is_always_convex,
     test_constrain_corner_passes_a_valid_target_through,
