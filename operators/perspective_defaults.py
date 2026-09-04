@@ -31,6 +31,7 @@ import bpy
 from bpy.props import EnumProperty, FloatVectorProperty, PointerProperty
 
 from . import perspective_nodes as nodes
+from . import perspective_space as space
 
 # Where the pointer lands: context.window_manager.perspective_transform
 WM_PROPERTY = "perspective_transform"
@@ -190,7 +191,19 @@ def _corner_property(index):
         _hold_placeholders()
         was_missing = not nodes.has_perspective(strip)
         corners = list(nodes.read_pin(strip))
-        corners[index] = value
+        # The handle drag guards itself against a non-convex quad; this is the
+        # same guard on the panel's own path, and it costs nothing because this
+        # path already runs Python. It only ever covers a strip with no
+        # transform yet, where the other three corners are still identity, so
+        # the shapes it refuses are the ones you get by pulling one corner
+        # across the square's diagonal. Narrow, but it is the guard being
+        # consistent rather than absent. Once the strip has a transform the
+        # panel binds to the sockets, and nothing in Python sits between the
+        # slider and the value - see STRIP_PT_perspective's warning.
+        constrained = space.constrain_corner(corners, index, value)
+        if constrained is None:
+            return
+        corners[index] = constrained
         nodes.write_pin(strip, scene, corners)
         _push_undo(strip, was_missing)
 

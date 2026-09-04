@@ -15,6 +15,7 @@ drag cannot be driven by simulated events, but _drag_to can be called directly
 with a stand-in region, and that runs the real guard against the real matrices.
 """
 
+import contextlib
 import os
 
 import harness as H
@@ -108,6 +109,68 @@ def _move_cursor_to(stub, nodes, scene, strip, pin_point):
     """Move the cursor to a pin-space point and return where the corners ended up."""
     stub._drag_to(_FakeContext(scene), *_region_of(scene, pin_point))
     return [tuple(round(float(v), 4) for v in c) for c in nodes.read_pin(strip)]
+
+
+# A quad only the panel's numeric fields can produce: corner 2 pulled across
+# the diagonal between its neighbours. The drag cannot create it, which is
+# exactly why a test has to hand it to the drag ready-made.
+CONCAVE_PIN = ((0.0, 0.0), (0.0, 1.0), (0.35, 0.35), (1.0, 0.0))
+
+
+def _walk(stub, nodes, scene, strip, index, destination, steps=20):
+    """
+    Drag one handle towards a pin-space point, counting the events that moved it.
+
+    A single placement says nothing about a guard that works on travel, and the
+    count is the measurement that matters here: a refused drag is not one that
+    ends in the wrong place, it is one that ends where it started having
+    ignored every event on the way.
+    """
+    start = tuple(float(v) for v in nodes.read_pin(strip)[index])
+    moved = 0
+    for step in range(1, steps + 1):
+        fraction = step / steps
+        point = (start[0] + (destination[0] - start[0]) * fraction,
+                 start[1] + (destination[1] - start[1]) * fraction)
+        before = tuple(float(v) for v in nodes.read_pin(strip)[index])
+        _move_cursor_to(stub, nodes, scene, strip, point)
+        after = tuple(float(v) for v in nodes.read_pin(strip)[index])
+        if after != before:
+            moved += 1
+    return moved
+
+
+def _random_convex_quad(rng, space):
+    """
+    A convex quad in the unit square, in nodes.CORNER_SOCKETS walk order.
+
+    Each corner is drawn from its own quadrant, which makes a convex quad far
+    more often than not; the predicate is asked anyway rather than assumed.
+    """
+    while True:
+        quad = [(rng.uniform(0.0, 0.45), rng.uniform(0.0, 0.45)),
+                (rng.uniform(0.0, 0.45), rng.uniform(0.55, 1.0)),
+                (rng.uniform(0.55, 1.0), rng.uniform(0.55, 1.0)),
+                (rng.uniform(0.55, 1.0), rng.uniform(0.0, 0.45))]
+        if space.is_convex_quad(quad):
+            return quad
+
+
+@contextlib.contextmanager
+def _registered(operator_class):
+    """
+    Register an operator class for the duration of one test.
+
+    The suite does not install the addon, so bpy.ops has nothing to call
+    otherwise - and the class is taken straight back out again, since
+    test_addon registers the whole package and would meet it still there.
+    """
+    import bpy
+    bpy.utils.register_class(operator_class)
+    try:
+        yield
+    finally:
+        bpy.utils.unregister_class(operator_class)
 
 
 def test_predicate_separates_the_shapes():
@@ -294,12 +357,432 @@ def test_a_refused_drag_renders_the_shape_it_stopped_at():
     return failures
 
 
+def test_a_drag_escapes_a_shape_it_did_not_make():
+    """
+    A drag must be able to leave a non-convex shape, and not to re-enter one.
+
+    The guard's rule is "do not make it worse", not "must be convex", and the
+    difference only shows from inside a bad quad. Only the panel's numeric
+    fields can produce one - they write their socket and nothing in Python sits
+    between - and a guard that asks solely whether the candidate is convex
+    refuses every small step out of it, because a step out of a bad shape is
+    still a bad shape. Measured on 5.2.1 before the rule changed: all four
+    handles dead in every direction, 0 of 40 events moving anything, against 33
+    of 40 for the same walk from a convex start. That left the Make Convex
+    button as the only way back out of a state the panel could reach in one
+    slider drag.
+
+    Asserted as properties rather than as positions: where a corner ends up in
+    a shape the guard is not constraining is not the point, and pinning it to a
+    number here would make this a test of the drag maths instead.
+
+    Every case starts a fresh strip, because a drag that escapes is supposed to
+    change the shape and the next handle has to meet the original one.
+    """
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    gizmo_module = H.import_addon_package_module("gizmos.perspective_handles_gizmo")
+    failures = []
+
+    for index, destination in ((0, (0.9, 0.1)), (1, (0.1, 0.9)),
+                               (2, (0.9, 0.9)), (3, (0.9, 0.1))):
+        scene, strip = _setup(f"convex_escape_{index}")
+        nodes.write_pin(strip, scene, CONCAVE_PIN)
+        if space.is_convex_quad(nodes.read_pin(strip)):
+            failures.append(f"corner {index}: the fixture is not concave to begin with")
+            continue
+
+        stub = _begin_drag(gizmo_module, nodes, space, scene, strip, index)
+        moved = _walk(stub, nodes, scene, strip, index, destination)
+        if moved != 20:
+            failures.append(
+                f"handle {index} moved on {moved} of 20 events inside a shape it "
+                "did not make; the guard is refusing moves out of a bad quad")
+
+        # Corner 2 is the one across the diagonal, so it is the one whose drag
+        # has to end somewhere renderable. No other single corner can reach
+        # that concavity, so the other three are not asked to fix it - they
+        # only have to be free to move.
+        if index == 2 and not space.is_convex_quad(nodes.read_pin(strip)):
+            failures.append(
+                "dragging the corner that broke the quad back out left it concave")
+
+    # And the escape is one-way. This is the half that keeps "do not make it
+    # worse" from quietly meaning "anything goes": the moment the shape is
+    # sound again the guard re-arms, mid-drag, on the same handle.
+    scene, strip = _setup("convex_escape_oneway")
+    nodes.write_pin(strip, scene, CONCAVE_PIN)
+    stub = _begin_drag(gizmo_module, nodes, space, scene, strip, 2)
+    _walk(stub, nodes, scene, strip, 2, (0.95, 0.95))
+    if not space.is_convex_quad(nodes.read_pin(strip)):
+        failures.append("the escape drag never reached a convex shape")
+    else:
+        _walk(stub, nodes, scene, strip, 2, (0.2, 0.2))
+        if not space.is_convex_quad(nodes.read_pin(strip)):
+            failures.append(
+                "the same drag went straight back into a concave shape; the "
+                "guard did not re-arm once the quad was sound")
+
+    return failures
+
+
+def test_constrain_corner_result_is_always_convex():
+    """
+    Every position the projection returns must satisfy the predicate it serves.
+
+    A guard whose own output its own test rejects is worse than no guard, and
+    that is the failure this catches: the projection lands exactly ON a
+    constraint, so the cross product it produces comes out at CONVEX_EPSILON
+    plus or minus a rounding error and is_convex_quad rejects about half of
+    them. With CONVEX_MARGIN set to zero this fails on roughly a third of the
+    cases below.
+
+    The result is checked exactly as returned - a mathutils.Vector, which is
+    float32, as is the socket it is bound for. That is deliberate. Quantizing a
+    corner to float32 moves the cross products around it by up to about 1e-7,
+    a thousand times the margin that sufficed in double precision, so a version
+    of this test working in doubles would pass against a margin the addon
+    cannot actually use. See CONVEX_MARGIN's comment for the sweep.
+    """
+    import random
+
+    space = H.import_addon_package_module("operators.perspective_space")
+    failures = []
+
+    rng = random.Random(1)
+    trials = 2000
+    rejected = refused = projected = 0
+    for _ in range(trials):
+        quad = _random_convex_quad(rng, space)
+        index = rng.randrange(4)
+        target = (rng.uniform(-0.4, 1.4), rng.uniform(-0.4, 1.4))
+        result = space.constrain_corner(quad, index, target)
+        if result is None:
+            refused += 1
+            continue
+        candidate = list(quad)
+        candidate[index] = result
+        if not space.is_convex_quad(candidate):
+            rejected += 1
+        if (float(result[0]), float(result[1])) != target:
+            projected += 1
+
+    if rejected:
+        failures.append(
+            f"{rejected} of {trials} projected positions are not convex by "
+            "is_convex_quad - CONVEX_MARGIN is too small to survive float32")
+    if refused:
+        failures.append(
+            f"{refused} of {trials} convex quads were refused outright; a quad "
+            "that is already convex always has room for one of its corners")
+    if projected < trials // 10:
+        failures.append(
+            f"only {projected} of {trials} targets were projected at all, so "
+            "this test is no longer exercising the projection")
+
+    return failures
+
+
+def test_constrain_corner_passes_a_valid_target_through():
+    """
+    A target that is already valid must come back untouched, bit for bit.
+
+    A guard that projected unconditionally would move values nobody asked it to
+    move - and on the panel's placeholder rows that is a slider quietly
+    disagreeing with the cursor. Targets are rounded to float32 first, because
+    that is what a socket or a Blender property can hold, so the comparison can
+    then be exact rather than approximate.
+    """
+    import random
+    import struct
+
+    space = H.import_addon_package_module("operators.perspective_space")
+    failures = []
+
+    def f32(value):
+        """Round to what a socket can actually store."""
+        return struct.unpack("f", struct.pack("f", value))[0]
+
+    rng = random.Random(7)
+    checked = moved = 0
+    for _ in range(2000):
+        quad = _random_convex_quad(rng, space)
+        index = rng.randrange(4)
+        target = (f32(rng.uniform(0.0, 1.0)), f32(rng.uniform(0.0, 1.0)))
+        candidate = list(quad)
+        candidate[index] = target
+        # Only a target that is genuinely valid has a right to come back
+        # unchanged, and CONVEX_MARGIN makes valid a hair stricter than the
+        # predicate - so ask for room to spare rather than for the boundary.
+        if not space.is_convex_quad(candidate, epsilon=space.CONVEX_EPSILON * 10.0):
+            continue
+        checked += 1
+        result = space.constrain_corner(quad, index, target)
+        if result is None or (float(result[0]), float(result[1])) != target:
+            moved += 1
+
+    if checked < 100:
+        failures.append(
+            f"only {checked} valid targets were generated, too few to say "
+            "anything about the pass-through")
+    if moved:
+        failures.append(
+            f"{moved} of {checked} already-valid targets came back changed")
+
+    return failures
+
+
+def test_constrain_corner_finds_the_nearest_point():
+    """
+    The projection has to be the *nearest* valid position, not merely a valid one.
+
+    An approximation would still guard correctly and would still pass every
+    other test here, while putting the corner somewhere the user did not point.
+    The gizmo's own refuse-then-retry-one-axis is exactly such an
+    approximation, and on a boundary that is not axis-aligned it lands
+    somewhere quite different - so the answer is compared against a brute-force
+    scan.
+
+    The scan asks is_convex_quad rather than the module's own half-planes: a
+    test that reused the implementation's idea of the feasible set could not
+    catch the implementation getting that set wrong. The tolerance covers the
+    one legitimate difference between the two, CONVEX_MARGIN, which is worth
+    about 1e-6 of position.
+    """
+    import random
+
+    space = H.import_addon_package_module("operators.perspective_space")
+    failures = []
+
+    rng = random.Random(11)
+    grid = 200
+    worst = 0.0
+    for _ in range(12):
+        quad = _random_convex_quad(rng, space)
+        index = rng.randrange(4)
+        target = (rng.uniform(-0.3, 1.3), rng.uniform(-0.3, 1.3))
+        result = space.constrain_corner(quad, index, target)
+        if result is None:
+            failures.append("a convex quad was refused")
+            continue
+        ours = ((float(result[0]) - target[0]) ** 2
+                + (float(result[1]) - target[1]) ** 2) ** 0.5
+
+        candidate = list(quad)
+        best = None
+        for step_x in range(grid + 1):
+            x = step_x / grid
+            for step_y in range(grid + 1):
+                y = step_y / grid
+                candidate[index] = (x, y)
+                if not space.is_convex_quad(candidate):
+                    continue
+                distance = ((x - target[0]) ** 2 + (y - target[1]) ** 2) ** 0.5
+                if best is None or distance < best:
+                    best = distance
+        if best is not None:
+            worst = max(worst, ours - best)
+
+    if worst > 1e-3:
+        failures.append(
+            f"the projection is {worst:.3e} further from the target than a "
+            f"{grid + 1}x{grid + 1} scan found, so it is not the nearest point")
+
+    return failures
+
+
+def test_constrain_corner_refuses_a_degenerate_quad():
+    """
+    Three fixed corners on one line leaves nowhere for the fourth to go.
+
+    The answer has to be None rather than an invented point: the collinear
+    triple is one of the four cross products, and the moving corner is not in
+    it, so no position for it can rescue the quad. The second half of the check
+    is that the refusal is not simply a blanket one.
+    """
+    space = H.import_addon_package_module("operators.perspective_space")
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    failures = []
+
+    collinear = ((0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (1.0, 0.0))
+    result = space.constrain_corner(collinear, 3, (0.9, 0.1))
+    if result is not None:
+        failures.append(
+            f"a quad whose other three corners are collinear answered "
+            f"{tuple(result)}, expected None")
+
+    sound = space.constrain_corner(nodes.IDENTITY_PIN, 3, (0.9, 0.1))
+    if sound is None:
+        failures.append("a sound quad was refused too, so the refusal says nothing")
+
+    return failures
+
+
+def test_a_placeholder_write_cannot_go_concave():
+    """
+    The panel's placeholder rows must not be able to write an unrenderable quad.
+
+    They are the one numeric path that runs Python before the value lands, so
+    they get the same guard the drag has. Once the strip has a transform the
+    rows bind straight to the sockets and nothing can intercept them - that is
+    the gap Make Convex exists for, and it is not this test.
+    """
+    import bpy
+
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    defaults = H.import_addon_package_module("operators.perspective_defaults")
+    failures = []
+
+    defaults.register_perspective_defaults()
+
+    # Corner 2 pulled across the diagonal between its neighbours, on a strip
+    # whose other three corners are still identity.
+    scene, strip = _setup("convex_placeholder_bad")
+    nodes.clear(strip, scene)
+    with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
+        stand_in = defaults.get_defaults(bpy.context)
+        stand_in.upper_right = CONCAVE_PIN[2]
+    if not nodes.has_perspective(strip):
+        failures.append("the write was dropped entirely instead of constrained")
+    elif not space.is_convex_quad(nodes.read_pin(strip)):
+        pin = [tuple(round(float(v), 4) for v in c) for c in nodes.read_pin(strip)]
+        failures.append(f"a placeholder wrote a concave quad: {pin}")
+
+    # And a value it has no business touching must arrive unchanged.
+    scene, strip = _setup("convex_placeholder_ok")
+    nodes.clear(strip, scene)
+    with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
+        stand_in = defaults.get_defaults(bpy.context)
+        stand_in.upper_right = (0.75, 0.9)
+    written = tuple(float(v) for v in nodes.read_pin(strip)[2])
+    if abs(written[0] - 0.75) > 1e-6 or abs(written[1] - 0.9) > 1e-6:
+        failures.append(f"a valid placeholder write was moved to {written}")
+
+    return failures
+
+
+def test_make_convex_repairs_a_concave_quad():
+    """
+    Make Convex must turn a concave pin into one that renders.
+
+    Asserted on the rendered frame, because the value alone would not settle
+    it: measured on 5.2.1 a concave pin fills the frame edge to edge with
+    garbage, and so does no pin at all - so an operator that "repaired" the
+    quad by clearing it back to identity would look like one that worked, on
+    coverage and on convexity both. What separates them here is that the repair
+    is the *nearest* convex position, which puts the corner on the boundary and
+    renders a thin quad: a full frame before, a sliver after.
+    """
+    import bpy
+    import numpy as np
+
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    ops = H.import_addon_package_module("operators.perspective_operators")
+    scene, strip = _setup("convex_repair")
+    failures = []
+
+    nodes.write_pin(strip, scene, CONCAVE_PIN)
+    broken = H.render_scene(scene, "convex_repair_broken", frame=1)
+    if float((broken[..., 3] > 0.5).mean()) < 0.99:
+        failures.append(
+            "the fixture should render a full frame of garbage; a concave pin "
+            "that no longer does means this test has stopped measuring anything")
+
+    with _registered(ops.SEQUENCER_OT_perspective_make_convex):
+        with bpy.context.temp_override(scene=scene, sequencer_scene=scene,
+                                       active_strip=strip):
+            if not ops.SEQUENCER_OT_perspective_make_convex.poll(bpy.context):
+                failures.append("the operator did not poll on a concave quad")
+            result = bpy.ops.sequencer.perspective_make_convex()
+            if 'FINISHED' not in result:
+                failures.append(f"the operator returned {result}")
+            still_offered = ops.SEQUENCER_OT_perspective_make_convex.poll(bpy.context)
+
+    if not space.is_convex_quad(nodes.read_pin(strip)):
+        failures.append("the quad is still not convex after the repair")
+    if still_offered:
+        failures.append("the operator still offers itself on a repaired quad")
+
+    moved = sum(1 for got, was in zip(nodes.read_pin(strip), CONCAVE_PIN)
+                if abs(float(got[0]) - was[0]) > 1e-4
+                or abs(float(got[1]) - was[1]) > 1e-4)
+    if moved != 1:
+        failures.append(f"{moved} corners moved; the repair should move exactly one")
+
+    repaired = H.render_scene(scene, "convex_repair_fixed", frame=1)
+    coverage = float((repaired[..., 3] > 0.5).mean())
+    if np.isnan(repaired).any():
+        failures.append("the repaired pin rendered NaNs")
+    if not 0.01 < coverage < 0.9:
+        failures.append(
+            f"the repaired frame covers {coverage:.3f} of the frame; a full one "
+            "means a concave or an identity pin is still what is being rendered")
+
+    return failures
+
+
+def test_make_convex_overwrites_a_bad_keyframe():
+    """
+    On an animated corner the bad value is in a keyframe, so the key has to change.
+
+    Writing only the socket looks like it worked and is undone by the next
+    frame change, because an animated property is driven by its fcurve - the
+    phantom keyframe in DEV.md. Reset had to learn this rule already; the
+    repair meets it by auto-keying the corner it moved, exactly as a drag does.
+
+    Stepping the frame away and back is the only thing that tells a written key
+    from a written socket.
+    """
+    import bpy
+
+    nodes = H.import_addon_package_module("operators.perspective_nodes")
+    space = H.import_addon_package_module("operators.perspective_space")
+    anim = H.import_addon_package_module("operators.perspective_anim")
+    ops = H.import_addon_package_module("operators.perspective_operators")
+    scene, strip = _setup("convex_repair_keyed")
+    failures = []
+
+    nodes.write_pin(strip, scene, CONCAVE_PIN)
+    anim.insert_corner_key(strip, scene, 2, frame=1)
+    scene.tool_settings.use_keyframe_insert_auto = True
+
+    with _registered(ops.SEQUENCER_OT_perspective_make_convex):
+        with bpy.context.temp_override(scene=scene, sequencer_scene=scene,
+                                       active_strip=strip,
+                                       tool_settings=scene.tool_settings):
+            bpy.ops.sequencer.perspective_make_convex()
+
+    repaired = tuple(float(v) for v in nodes.read_pin(strip)[2])
+    scene.frame_set(5)
+    scene.frame_set(1)
+    after = tuple(float(v) for v in nodes.read_pin(strip)[2])
+
+    if after != repaired:
+        failures.append(
+            f"the corner read {repaired} after the repair and {after} after a "
+            "frame change, so the fcurve overwrote it - the key was not keyed")
+    if not space.is_convex_quad(nodes.read_pin(strip)):
+        failures.append("the concave shape came back on the next frame change")
+
+    return failures
+
+
 TESTS = (
     test_predicate_separates_the_shapes,
     test_drag_refuses_to_enter_a_concave_shape,
     test_the_handle_moves_again_the_moment_the_drag_reverses,
     test_a_drag_along_the_boundary_keeps_moving,
     test_a_refused_drag_renders_the_shape_it_stopped_at,
+    test_a_drag_escapes_a_shape_it_did_not_make,
+    test_constrain_corner_result_is_always_convex,
+    test_constrain_corner_passes_a_valid_target_through,
+    test_constrain_corner_finds_the_nearest_point,
+    test_constrain_corner_refuses_a_degenerate_quad,
+    test_a_placeholder_write_cannot_go_concave,
+    test_make_convex_repairs_a_concave_quad,
+    test_make_convex_overwrites_a_bad_keyframe,
 )
 
 

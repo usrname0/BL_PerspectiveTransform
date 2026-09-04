@@ -178,16 +178,33 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
 
     def _accept_corner(self, corner):
         """
-        Return the corner clamped to the image, or None if it breaks the quad.
+        Return the corner clamped to the image, or None if the move is refused.
 
         Only this corner moves during a drag, so the other three are whatever
         they were on invoke, and the convexity test can be run against the
         working copy without re-reading the sockets.
+
+        The rule is "do not make it worse", not "must be convex". A quad that
+        was already non-convex when the drag began refuses every small step out
+        of itself, because a step out of a bad shape is still a bad shape:
+        measured on 5.2.1 from ((0,0), (0,1), (0.35,0.35), (1,0)), all four
+        handles were dead in every direction, 0 of 40 events moving anything,
+        against 33 of 40 for the same walk from a convex start. Only the
+        panel's numeric fields can create that state - they write their socket
+        and nothing in Python sits between - and being unable to drag out of it
+        left the Make Convex button as the sole way back.
+
+        So a move is accepted whenever the shape it leaves behind is convex, or
+        the shape it started from was not. The escape is one-way: the instant
+        the quad comes back to convex the first test starts passing and the
+        guard re-arms, so a drag can leave a bad shape and cannot re-enter one.
         """
         corner = nodes.clamp_corner(corner)
         candidate = list(self._pin_corners)
         candidate[self.handle_index] = corner
-        return corner if space.is_convex_quad(candidate) else None
+        if space.is_convex_quad(candidate):
+            return corner
+        return None if space.is_convex_quad(self._pin_corners) else corner
 
     def _drag_to(self, context, region_x, region_y):
         """

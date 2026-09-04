@@ -2,10 +2,13 @@
 BL Perspective Transform - Operators and the strip properties panel.
 
 The corner handles do the actual editing; these operators cover the things a
-drag cannot express: resetting the corners and removing the transform. Both are
-reached from the preview - Strip > Transform, Image > Clear, and the P and
-Alt P shortcuts - rather than from the panel, because Blender's own Transform
-and Crop panels carry no buttons and this one is meant to read like them.
+drag cannot express: resetting the corners, removing the transform, and
+repairing a quad that has been typed into a shape no homography can render.
+Reset and Clear are reached from the preview - Strip > Transform, Image > Clear,
+and the P and Alt P shortcuts - rather than from the panel, because Blender's
+own Transform and Crop panels carry no buttons and this one is meant to read
+like them. Make Convex is the exception: it is a button in the panel's own
+warning box, because that warning is the only thing that ever calls for it.
 
 STRIP_PT_perspective is the numeric view of the same state, and lives in the
 Properties editor beneath Blender's own Crop. See the addon's register() for
@@ -102,6 +105,86 @@ class SEQUENCER_OT_perspective_clear(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
+    """Move one corner the shortest distance that makes the shape renderable"""
+
+    bl_idname = "sequencer.perspective_make_convex"
+    bl_label = "Make Convex"
+    bl_description = ("Move the nearest corner back until the four form a "
+                      "convex shape the Corner Pin can render")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # The active strip, not the selection: this is the button in the
+        # panel's warning box, and the warning is about the strip the panel is
+        # drawing. read_pin answers identity for a strip with no transform, so
+        # the convexity test alone would never fire for one.
+        strip = getattr(context, "active_strip", None)
+        if strip is None or not nodes.has_perspective(strip):
+            return False
+        return not space.is_convex_quad(nodes.read_pin(strip))
+
+    def execute(self, context):
+        """
+        Repair the quad by moving whichever single corner has least to travel.
+
+        Each corner is projected onto the region where it alone would make the
+        quad convex, and the results that actually do are compared. Only one
+        corner moves: for a simple concave quad exactly one vertex is on the
+        wrong side, and projecting any of the other three cannot reach it -
+        those candidates come back failing is_convex_quad and are dropped.
+        """
+        strip = getattr(context, "active_strip", None)
+        scene = nodes.get_sequencer_scene(context)
+        if strip is None or scene is None:
+            self.report({'ERROR'}, "No strip to repair")
+            return {'CANCELLED'}
+
+        corners = [tuple(corner) for corner in nodes.read_pin(strip)]
+        best = None
+        for index in range(4):
+            moved = space.constrain_corner(corners, index, corners[index])
+            if moved is None:
+                continue
+            candidate = list(corners)
+            candidate[index] = moved
+            if not space.is_convex_quad(candidate):
+                continue
+            travel = ((moved[0] - corners[index][0]) ** 2
+                      + (moved[1] - corners[index][1]) ** 2)
+            if best is None or travel < best[0]:
+                best = (travel, index, moved)
+
+        # Every triple collinear, so no one corner can rescue the quad. The
+        # projection could not be made to produce this from a concave shape,
+        # but a hand-typed set of four values is not bound by that.
+        if best is None:
+            self.report({'ERROR'},
+                        "No single corner can make this shape convex - "
+                        "use Reset Perspective")
+            return {'CANCELLED'}
+
+        _travel, index, moved = best
+        corners[index] = moved
+        nodes.write_pin(strip, scene, corners)
+
+        # The same auto-key the drag does, on the same corner-only basis - and
+        # here it is load-bearing rather than consistent. On an animated corner
+        # the value being repaired is in a keyframe, so writing only the socket
+        # leaves the key holding the concave shape and the fcurve puts it back
+        # on the next frame change. The key is the thing that has to change.
+        keyed = anim.autokey_corner(strip, scene, index,
+                                    getattr(context, "tool_settings", None))
+        label = nodes.CORNER_LABELS[index]
+        if keyed:
+            self.report({'INFO'}, f"Moved {label} to the nearest convex "
+                                  f"position, and keyframed it")
+        else:
+            self.report({'INFO'}, f"Moved {label} to the nearest convex position")
+        return {'FINISHED'}
+
+
 class STRIP_PT_perspective(bpy.types.Panel):
     """
     Strip properties panel, sitting directly beneath Blender's own Crop.
@@ -193,11 +276,16 @@ class STRIP_PT_perspective(bpy.types.Panel):
             box = layout.box()
             box.label(text="Corners do not form a convex shape", icon='ERROR')
             box.label(text="This cannot be rendered; move a corner back")
+            # The one path that can still produce a bad shape gets a one-click
+            # way out of it, since the guard cannot sit between the slider and
+            # the socket. It moves whichever corner has least to travel.
+            box.operator(SEQUENCER_OT_perspective_make_convex.bl_idname)
 
 
 classes = (
     SEQUENCER_OT_perspective_activate,
     SEQUENCER_OT_perspective_reset,
     SEQUENCER_OT_perspective_clear,
+    SEQUENCER_OT_perspective_make_convex,
     STRIP_PT_perspective,
 )
