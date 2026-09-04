@@ -238,7 +238,7 @@ class STRIP_PT_perspective(bpy.types.Panel):
 
         layout.use_property_split = True
         layout.use_property_decorate = True
-        # Blender's own Transform and Crop panels grey out on a muted strip.
+        # Blender's own Transform and Crop panels gray out on a muted strip.
         layout.active = not strip.mute
 
         # The handover check is what keeps a drag that has just created the

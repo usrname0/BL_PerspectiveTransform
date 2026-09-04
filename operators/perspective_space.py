@@ -243,8 +243,8 @@ def is_convex_quad(corners, epsilon=CONVEX_EPSILON):
 # A projection lands exactly *on* the constraint it was projected onto, so the
 # cross product it produces comes out at CONVEX_EPSILON plus or minus a
 # rounding error, and is_convex_quad's `abs(cross) < epsilon` rejects roughly
-# half of them. tests/spikes/constrain_sweep.py measures 6471 of 20000
-# projections non-convex by this module's own predicate with no margin at all.
+# half of them: swept over 20000 random projections, 6471 come back non-convex
+# by this module's own predicate with no margin at all.
 #
 # The size of the margin is set by float32, not by that rounding error. A
 # Corner Pin socket stores a C float - writing 0.70000000000000018 reads back
@@ -358,8 +358,7 @@ def constrain_corner(corners, index, target):
     in it lies either in the relative interior of one of its facets or at one of
     its vertices, so projecting the target onto each constraint line and
     intersecting each pair of lines is an exhaustive candidate set. Measured
-    exact against a 601x601 brute-force scan - see
-    tests/spikes/constrain_sweep.py.
+    exact against a 601x601 brute-force scan.
 
     The result is a Vector, so it carries float32 like the socket it is bound
     for; a target that came from a socket or a Blender property survives the

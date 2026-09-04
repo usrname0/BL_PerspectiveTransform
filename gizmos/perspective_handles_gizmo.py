@@ -187,28 +187,18 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         A target that keeps the quad convex is returned untouched. One that does
         not is projected onto the region that would, by space.constrain_corner,
         so the corner slides along the boundary rather than stopping against it.
-        The older rule refused such a move whole and then retried X alone and Y
-        alone, which is a coarse approximation of the same projection and only
-        agrees with it where the boundary happens to be axis-aligned: measured
-        on 5.2.1, 60 drag events of (-0.020, -0.012) into the wall raised by
-        pulling corner 1 across to x=0.35 moved nothing on 36 of them under the
-        axis retries, and on 0 of them under the projection.
 
         The rule is "do not make it worse", not "must be convex". A quad that
         was already non-convex when the drag began is not projected at all and
-        every move is accepted, because a step out of a bad shape is still a bad
-        shape and projecting one would teleport the corner instead of dragging
-        it - restoring a bad quad in one jump is what Make Convex is for.
-        Measured on 5.2.1 from ((0,0), (0,1), (0.35,0.35), (1,0)) before the
-        rule changed, all four handles were dead in every direction, 0 of 40
-        events moving anything, against 33 of 40 for the same walk from a convex
-        start. Only the panel's numeric fields can create that state - they
-        write their socket and nothing in Python sits between - and being unable
-        to drag out of it left the Make Convex button as the sole way back.
+        every move is accepted: projecting one would teleport the corner instead
+        of dragging it, and restoring a bad quad in one jump is what Make Convex
+        is for. Only the panel's numeric fields can reach that state - they write
+        their socket with nothing in Python in between - so without this branch
+        the button would be the sole way back out of it.
 
-        The escape is one-way: the instant the quad comes back to convex the
-        projection starts applying again and the guard re-arms mid-drag, so a
-        drag can leave a bad shape and cannot re-enter one.
+        WARNING: the escape is one-way. The instant the quad comes back to convex
+        the projection applies again and the guard re-arms mid-drag, so a drag can
+        leave a bad shape and cannot re-enter one.
         """
         corner = nodes.clamp_corner(corner)
         if not space.is_convex_quad(self._pin_corners):
@@ -230,13 +220,12 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         again. With deltas the corner stops at the boundary and moves again on
         the first mouse move back off it.
 
-        One consequence: the handle sits offset from the cursor after being held
-        at a boundary, and exit() warps it back when the drag ends. Projecting
-        the target rather than refusing it does not change that - a corner held
-        on a wall is still behind a cursor that carried on - but it does keep
-        the property the accumulation exists for, since pushing further into the
-        wall re-projects to the same point and the first move back off it
-        responds on that event.
+        One consequence: a corner held on a wall sits behind a cursor that
+        carried on, so the handle is offset until exit() warps it back at the
+        end of the drag. What the accumulation buys is the responsiveness -
+        pushing further into the wall projects to the same point, and the first
+        move back off it takes effect on that event rather than after the
+        cursor has retraced its overshoot.
 
         This relies on event.mouse_region_x staying continuous under
         use_grab_cursor, which it does; absolute positions would jump at every
