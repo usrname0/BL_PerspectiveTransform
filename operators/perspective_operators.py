@@ -4,11 +4,12 @@ BL Perspective Transform - Operators and the strip properties panel.
 The corner handles do the actual editing; these operators cover the things a
 drag cannot express: resetting the corners, removing the transform, and
 repairing a quad that has been typed into a shape no homography can render.
-Reset and Clear are reached from the preview - Strip > Transform, Image > Clear,
-and the P and Alt P shortcuts - rather than from the panel, because Blender's
-own Transform and Crop panels carry no buttons and this one is meant to read
-like them. Make Convex is the exception: it is a button in the panel's own
-warning box, because that warning is the only thing that ever calls for it.
+Reset and Clear are reached from the preview rather than from the panel, because
+Blender's own Transform and Crop panels carry no buttons and this one is meant to
+read like them: Reset sits in the tool settings bar while the tool is active, and
+Clear is on Image > Clear and Alt P. Make Convex is the exception: it is a button
+in the panel's own warning box, because that warning is the only thing that ever
+calls for it.
 
 STRIP_PT_perspective is the numeric view of the same state, and lives in the
 Properties editor beneath Blender's own Crop. See the addon's register() for

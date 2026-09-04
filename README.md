@@ -11,6 +11,8 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 Corners can be dragged anywhere within the strip's geometry, which can
 be scaled out of bounds, rotated, cropped, etc. as usual.
 
+A corner will not drag into a shape the perspective cannot be solved for.
+
 ![An extreme corner-pin on a scaled-down strip](./examples/demo_complex.png)
 
 The transform is stored as a Corner Pin node inside a compositor strip modifier,
@@ -55,6 +57,13 @@ preview at all.
 **Clear** removes the transform: **Image > Clear > Perspective** in the preview,
 or **Alt P**. **Reset** returns the corners to the image rectangle, and is in the
 tool settings bar at the top of the preview while the Perspective tool is active.
+
+The numeric fields write the corner straight to the node, so unlike the handles
+they can reach a shape that will not render - push a corner past its neighbors
+by typing and you get a bow tie rather than a quad. The panel says so when that
+happens, and offers **Make Convex**, which moves whichever single corner has
+least to travel back to the nearest shape that renders. On an animated corner it
+keyframes the repair, so the fix is not undone by the curve on the next frame.
 
 ### Dragging corners outward
 
