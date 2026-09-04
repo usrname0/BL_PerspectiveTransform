@@ -9,9 +9,8 @@ Reach it from the preview toolbar, the Transform menus, or the keyboard shortcut
 ![Dragging a corner handle in the VSE preview](./examples/demo.gif)
 
 Corners can be dragged anywhere within the strip's geometry, which can
-be scaled out of bounds, rotated, cropped, etc. as usual.
-
-A corner will not drag into a shape the perspective cannot be solved for.
+be scaled out of bounds, rotated, cropped, etc. as usual. (A corner will not 
+drag into a shape the perspective cannot be solved for.)
 
 ![An extreme corner-pin on a scaled-down strip](./examples/demo_complex.png)
 
@@ -21,6 +20,8 @@ renders.
 
 Because the transform lives in a node group on the strip, it survives save and
 load, shows up in the Strip Modifiers tab, and every corner can be keyframed.
+
+![Text and other visual strips work too](./examples/demo_texttoo.png)
 
 ## Animating a corner
 
@@ -32,8 +33,6 @@ Corners animate the way the rest of Blender does.
   after the strip, and retime like any other animation.
 
 **Reset** clears the corner animation along with the shape.
-
-![Text and other visual strips work too](./examples/demo_texttoo.png)
 
 ## Compatibility
 
@@ -69,7 +68,7 @@ keyframes the repair, so the fix is not undone by the curve on the next frame.
 
 Blender's Corner Pin node clamps corners to the edges of the source rectangle,
 so a corner cannot be dragged outside the strip's original bounds. Scale the
-strip down first, with the strip's own **Scale**, and the corners have somewhere
+strip first, with the strip's own **Scale**, and the corners have somewhere
 to go.
 
 ## Installation
