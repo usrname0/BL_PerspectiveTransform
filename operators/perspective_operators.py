@@ -192,7 +192,7 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
 
 class PERSPECTIVE_PT_perspective(bpy.types.Panel):
     """
-    Strip properties panel, sitting directly beneath Blender's own Crop.
+    Strip properties panel, at the bottom of the Strip tab.
 
     This is the only numeric UI the addon has.
 

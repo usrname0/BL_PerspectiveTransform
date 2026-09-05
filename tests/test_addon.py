@@ -82,6 +82,35 @@ def _check_menu_operator_context(addon):
     return failures
 
 
+def _stock_panel_orders():
+    """Map every stock strip panel to the bl_order set in its own class dict.
+
+    None where the class defines none, which is what all of them do except
+    Custom Properties.
+    """
+    return {name: getattr(bpy.types, name).__dict__.get("bl_order")
+            for name in dir(bpy.types) if name.startswith("STRIP_PT_")}
+
+
+def _check_stock_panels_untouched(before):
+    """Blender's own strip panels must be exactly as the addon found them.
+
+    Earlier versions raised bl_order on five stock panels and re-registered
+    them, to sit our panel beneath Crop. The extensions site review rejected
+    that outright - an addon does not reorder another addon's or Blender's
+    UI - so this pins the absence: same panels, same bl_order, none of them
+    unregistered on the way past.
+    """
+    failures = []
+    after = _stock_panel_orders()
+    for name, order in before.items():
+        if name not in after:
+            failures.append(f"{name} is no longer registered")
+        elif after[name] != order:
+            failures.append(f"{name}.bl_order changed {order!r} -> {after[name]!r}")
+    return failures
+
+
 def run():
     """Register and unregister the addon, reporting anything that breaks."""
     failures = []
@@ -93,6 +122,8 @@ def run():
 
     defaults = importlib.import_module(
         addon.__name__ + ".operators.perspective_defaults")
+
+    before_register = _stock_panel_orders()
 
     try:
         addon.register()
@@ -113,13 +144,7 @@ def run():
     if hasattr(bpy.types, "SEQUENCER_PT_perspective"):
         failures.append("SEQUENCER_PT_perspective is back in the preview sidebar")
 
-    # register() reorders Blender's own strip panels so ours lands under Crop.
-    for name in addon.PANELS_AFTER_PERSPECTIVE:
-        cls = getattr(bpy.types, name, None)
-        if cls is None:
-            failures.append(f"{name} vanished while being reordered")
-        elif getattr(cls, "bl_order", 0) != addon.PANEL_ORDER_AFTER:
-            failures.append(f"{name} was not pushed below the perspective panel")
+    failures.extend(_check_stock_panels_untouched(before_register))
 
     if not hasattr(bpy.ops.sequencer, "perspective_activate"):
         failures.append("sequencer.perspective_activate operator is missing")
@@ -157,17 +182,6 @@ def run():
     if hasattr(bpy.types.WindowManager, defaults.WM_PROPERTY):
         failures.append(f"WindowManager.{defaults.WM_PROPERTY} survived unregister()")
 
-    # Blender's own panels are not ours to keep. Every one we pushed has to go
-    # back to the bl_order it had - which for all of them is none at all - and
-    # has to still be registered. Restoring the order means unregistering the
-    # class and registering it again, so a failure in between takes one of
-    # Blender's own panels out of the UI until the next restart. Check for the
-    # class first: `cls is None` is that failure, not an absence to skip past.
-    for name in addon.PANELS_AFTER_PERSPECTIVE:
-        cls = getattr(bpy.types, name, None)
-        if cls is None:
-            failures.append(f"{name} did not survive being put back after unregister()")
-        elif "bl_order" in cls.__dict__:
-            failures.append(f"{name} kept the bl_order we gave it after unregister()")
+    failures.extend(_check_stock_panels_untouched(before_register))
 
     return failures

@@ -4,7 +4,7 @@
 # Blender Extension Manifest
 schema_version = "1.0.0"
 id = "BL_PerspectiveTransform"
-version = "2.2.2"
+version = "2.2.3"
 
 name = "BL Perspective Transform"
 tagline = "Corner-pin perspective distortion for the VSE preview"
@@ -18,7 +18,7 @@ maintainer = "usrname0"
 website = "https://github.com/usrname0/BL_PerspectiveTransform"
 
 # Tags for discoverability
-tags = ["Sequencer", "User Interface"]
+tags = ["Sequencer"]
 
 # Requirements
 blender_version_min = "5.0.0"

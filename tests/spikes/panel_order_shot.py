@@ -2,10 +2,11 @@
 Screenshot the strip Properties tab, to check where the Perspective panel sits.
 
 Panel order is invisible from Python - it is baked into the region when the
-panel list is first built - so this is the only way to confirm that
-register()'s bl_order push actually put Perspective directly beneath Crop.
-Run it after touching PANELS_AFTER_PERSPECTIVE, or after a new Blender version
-renames one of Blender's own strip panels.
+panel list is first built - so this is the only way to see where the panel
+actually lands. It lands at the bottom of the strip panel block, below Blender's
+own, because an addon panel registers after them and 2.2.3 stopped reordering
+Blender's panels to change that. Run it after touching the panel, or after a new
+Blender version, to confirm it is drawn and drawn once.
 
     blender.exe --factory-startup --python tests/spikes/panel_order_shot.py
 
@@ -109,7 +110,7 @@ def shoot():
     with bpy.context.temp_override(window=bpy.context.window, area=area, region=region):
         bpy.ops.screen.screenshot_area(filepath=OUT)
     print("wrote", OUT)
-    print("Perspective should appear directly beneath Crop, above Video.")
+    print("Perspective should appear at the bottom of the Strip tab.")
     return None
 
 

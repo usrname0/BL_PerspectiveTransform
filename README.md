@@ -47,8 +47,8 @@ Corners animate the way the rest of Blender does.
 2. Activate the Perspective tool from the toolbar, or press "P"
 3. Drag any of the four corner handles
 
-Numeric corner values and a filter setting are in the **Perspective** panel, in
-the **Strip** tab of the Properties editor, just below Crop. It works like the
+Numeric corner values and a filter setting are in the **Perspective** panel, at
+the bottom of the **Strip** tab of the Properties editor. It works like the
 Transform and Crop panels above it: the values are always there at their
 defaults, and typing one in gives the strip a perspective without touching the
 preview at all.
