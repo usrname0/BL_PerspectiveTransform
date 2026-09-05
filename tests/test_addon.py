@@ -83,10 +83,14 @@ def _check_menu_operator_context(addon):
 
 
 def _stock_panel_orders():
-    """Map every stock strip panel to the bl_order set in its own class dict.
+    """Map every stock strip panel to the bl_order in its own class dict.
 
-    None where the class defines none, which is what all of them do except
-    Custom Properties.
+    `__dict__.get` rather than `getattr`, because it reads only what the class
+    itself declares and an inherited value must not be mistaken for one this
+    addon wrote. Measured on 5.0.1, 5.1.2 and 5.2.1: 22, 22 and 23 STRIP_PT_*
+    panels, and not one of them sets bl_order itself. STRIP_PT_custom_props
+    resolves to 1000, inherited from rna_prop_ui.PropertyPanel - which is
+    exactly the distinction the probe has to keep.
     """
     return {name: getattr(bpy.types, name).__dict__.get("bl_order")
             for name in dir(bpy.types) if name.startswith("STRIP_PT_")}
@@ -95,11 +99,11 @@ def _stock_panel_orders():
 def _check_stock_panels_untouched(before):
     """Blender's own strip panels must be exactly as the addon found them.
 
-    Earlier versions raised bl_order on five stock panels and re-registered
-    them, to sit our panel beneath Crop. The extensions site review rejected
-    that outright - an addon does not reorder another addon's or Blender's
-    UI - so this pins the absence: same panels, same bl_order, none of them
-    unregistered on the way past.
+    Up to 2.2.2 register() raised bl_order on five of them and re-registered
+    them, so this addon's panel would sit beneath Crop. The extensions site
+    review rejected that outright and the code is gone - and a deletion
+    leaves nothing behind that can fail. This is what pins the absence: same
+    panels, same bl_order, none of them left unregistered.
     """
     failures = []
     after = _stock_panel_orders()
@@ -139,8 +143,8 @@ def run():
             failures.append(f"{name} was not registered")
 
     # The preview sidebar copy of the panel was removed once the Properties
-    # one had a home beside Transform and Crop. Registering it again would
-    # bring back a whole sidebar tab holding one duplicated panel.
+    # one existed. Registering it again would bring back a whole sidebar tab
+    # holding one duplicated panel.
     if hasattr(bpy.types, "SEQUENCER_PT_perspective"):
         failures.append("SEQUENCER_PT_perspective is back in the preview sidebar")
 

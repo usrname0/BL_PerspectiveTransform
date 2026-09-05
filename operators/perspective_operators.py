@@ -11,10 +11,8 @@ Clear is on Image > Clear and Alt P. Make Convex is the exception: it is a butto
 in the panel's own warning box, because that warning is the only thing that ever
 calls for it.
 
-PERSPECTIVE_PT_perspective is the numeric view of the same state, and lives in the
-Properties editor beneath Blender's own Crop. See the addon's register() for
-how it gets placed there, since panel order is not something a panel can ask
-for on its own.
+PERSPECTIVE_PT_perspective is the numeric view of the same state, and lives in
+the Strip tab of the Properties editor.
 """
 
 import bpy
