@@ -19,6 +19,16 @@ the preview image are built from), so a disagreement between the two shows up
 rather than being inferred.
 """
 
+# This spike deliberately speaks two Blender dialects: part A runs on 4.4 and
+# 4.5 as well as 5.x, so it reaches for editor.sequences and
+# new_effect(frame_end=...) behind hasattr and docstring probes. The workspace
+# checks against the 5.2 stubs alone, which know none of the 4.x spellings, and
+# nothing here can be annotated into agreeing with both. Strip.transform is the
+# other family: it belongs to the concrete strip classes, not to the base.
+# See BLENDER.md -> Stub setup.
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false
+# pyright: reportCallIssue=false, reportOperatorIssue=false
+
 import os
 import sys
 

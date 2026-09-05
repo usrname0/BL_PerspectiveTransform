@@ -13,6 +13,9 @@ here, and no stored copy of the corner positions: the node sockets are the only
 state.
 """
 
+from collections.abc import Sequence
+from typing import cast
+
 import bpy
 import gpu
 from bpy.types import Gizmo, GizmoGroup
@@ -80,6 +83,13 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
     bl_idname = "PERSPECTIVE_GT_perspective_handle"
     bl_target_properties = ()
 
+    # Which corner this handle owns, set in setup() and again by the group.
+    # It must stay a bare annotation rather than a declared property:
+    # register_class scans __annotations__ for property declarations and skips
+    # an entry with no value in the class dict, so this stays the plain Python
+    # attribute the drag reads back.
+    handle_index: int
+
     def setup(self):
         """Initialize handle state and the flags that keep it visible."""
         self.handle_index = 0
@@ -91,7 +101,6 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self.use_grab_cursor = True
         self.hide = False
         self.scale_basis = HANDLE_RADIUS
-        self.select_id = 0
         # Captured on invoke so a drag does no datablock bookkeeping per event.
         self._pin_on_invoke = None
         self._edit_node = None
@@ -101,11 +110,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self._pin_corners = None
         self._last_mouse = None
 
-    def draw_prepare(self, context):
-        """Keep the handle visible regardless of gizmo group state."""
-        self.hide = False
-
-    def draw(self, context):
+    def draw(self, context: bpy.types.Context):
         """Draw the handle square."""
         self._draw_square(COLOR_HANDLE_ACTIVE if self.is_highlight else COLOR_HANDLE)
 
@@ -122,21 +127,39 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         gpu.state.blend_set('ALPHA')
         shader.bind()
         shader.uniform_float("color", color)
-        batch_for_shader(shader, 'TRI_FAN', {"pos": corners}).draw(shader)
+        # TRI_FAN is absent from the stubs' primitive list but is real: it is in
+        # GPUBatch's own docstring on 5.1 and 5.2, and an offscreen draw of this
+        # square lit the same 784 pixels as the equivalent TRIS on both the
+        # OpenGL and the Vulkan backend of 5.2.1.
+        batch = batch_for_shader(
+            shader, 'TRI_FAN',  # pyright: ignore[reportArgumentType]
+            {"pos": corners})
+        batch.draw(shader)
         gpu.state.blend_set('NONE')
 
         _draw_polyline(corners, COLOR_HANDLE_BORDER, width=1.0, closed=True)
 
-    def test_select(self, context, location):
-        """Return this gizmo's id when the cursor is within the grab radius."""
+    def test_select(self, context: bpy.types.Context, location: Sequence[int]):
+        """
+        Report a hit when the cursor is within the grab radius.
+
+        RNA calls the return value intersect_id and documents one thing about
+        it, "use -1 to skip this gizmo": it indexes a part within one gizmo,
+        and these have one part each. Any value >= 0 highlights this gizmo
+        identically, so 0 is the whole of the useful range. Which handle a drag
+        belongs to comes from handle_index, which is what invoke() reads.
+
+        WARNING: location is an (x, y) pair of region pixels, not an Event,
+        whatever Blender names the parameter.
+        """
         centre = self.matrix_basis.translation
         dx = centre.x - location[0]
         dy = centre.y - location[1]
         if (dx * dx + dy * dy) ** 0.5 <= SELECT_RADIUS:
-            return self.select_id
+            return 0
         return -1
 
-    def invoke(self, context, event):
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
         """
         Prepare everything the drag needs, once.
 
@@ -162,7 +185,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         self._last_mouse = (event.mouse_region_x, event.mouse_region_y)
         return {'RUNNING_MODAL'}
 
-    def modal(self, context, event, tweak):
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event,
+              tweak: set[str]):
         """Move this corner to follow the cursor."""
         if event.type == 'MOUSEMOVE':
             self._drag_to(context, event.mouse_region_x, event.mouse_region_y)
@@ -176,7 +200,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             return {'CANCELLED'}
         return {'RUNNING_MODAL'}
 
-    def _accept_corner(self, corner):
+    def _accept_corner(self, corner: Vector):
         """
         Return the nearest position this corner may take, or None for no such position.
 
@@ -208,7 +232,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         # reached by a bug. Refusing the move is the safe reading of one.
         return space.constrain_corner(self._pin_corners, self.handle_index, corner)
 
-    def _drag_to(self, context, region_x, region_y):
+    def _drag_to(self, context: bpy.types.Context, region_x: int, region_y: int):
         """
         Move this corner by however far the cursor traveled since the last event.
 
@@ -231,7 +255,8 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         use_grab_cursor, which it does; absolute positions would jump at every
         cursor wrap.
         """
-        if self._edit_node is None or context.region is None or self._last_mouse is None:
+        if (self._edit_node is None or context.region is None
+                or self._last_mouse is None or self._pin_corners is None):
             return
         scene = nodes.get_sequencer_scene(context)
         view2d = context.region.view2d
@@ -254,7 +279,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
         nodes.write_corner(self._edit_node, self.handle_index, accepted)
         _invalidate(nodes.get_active_strip(context))
 
-    def _finish_edit(self, context):
+    def _finish_edit(self, context: bpy.types.Context):
         """
         Do the end-of-drag work: auto-key, then push undo.
 
@@ -282,7 +307,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
                             getattr(context, "tool_settings", None))
         bpy.ops.ed.undo_push(message="Perspective Corner")
 
-    def _restore(self, context):
+    def _restore(self, context: bpy.types.Context):
         """Put the pin back to where it was when the drag started."""
         if self._pin_on_invoke is None or self._edit_node is None:
             return
@@ -290,7 +315,7 @@ class PERSPECTIVE_GT_perspective_handle(Gizmo):
             nodes.write_corner(self._edit_node, index, corner)
         _invalidate(nodes.get_active_strip(context))
 
-    def exit(self, context, cancel):
+    def exit(self, context: bpy.types.Context, cancel: bool):
         """
         Close out the drag: restore or commit, then put the cursor back.
 
@@ -353,7 +378,7 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
     bl_options = {'SHOW_MODAL_ALL'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         """Show the handles only for a visible, selected strip while the tool is active."""
         space_data = context.space_data
         if not space_data or space_data.type != 'SEQUENCE_EDITOR':
@@ -377,14 +402,21 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             return False
         return any(getattr(tool, "idname", None) == TOOL_IDNAME for tool in workspace.tools)
 
-    def setup(self, context):
-        """Create one gizmo per corner, in perspective_nodes corner order."""
-        for index in range(4):
-            gizmo = self.gizmos.new(PERSPECTIVE_GT_perspective_handle.bl_idname)
-            gizmo.handle_index = index
-            gizmo.select_id = index
+    def setup(self, context: bpy.types.Context):
+        """
+        Create one gizmo per corner, in perspective_nodes corner order.
 
-    def refresh(self, context):
+        WARNING: do not set use_draw_modal, use_event_handle_all or
+        use_grab_cursor here. gizmos.new() calls the handle's own setup()
+        first, which sets all three on every handle before this method sees
+        them, so a copy here would govern nothing.
+        """
+        for index in range(4):
+            gizmo = cast(PERSPECTIVE_GT_perspective_handle,
+                         self.gizmos.new(PERSPECTIVE_GT_perspective_handle.bl_idname))
+            gizmo.handle_index = index
+
+    def refresh(self, context: bpy.types.Context):
         """Move the handles onto the strip's current corner positions."""
         scene = nodes.get_sequencer_scene(context)
         strip = nodes.get_active_strip(context)
@@ -409,7 +441,7 @@ class PERSPECTIVE_GGT_perspective_handles(GizmoGroup):
             gizmo.matrix_basis = Matrix.Translation((x, y, 0.0))
             gizmo.hide = False
 
-    def draw_prepare(self, context):
+    def draw_prepare(self, context: bpy.types.Context):
         """Recompute positions each redraw so handles track zoom and pan."""
         self.refresh(context)
         self._draw_guides()

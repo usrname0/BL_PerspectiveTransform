@@ -45,10 +45,10 @@ class SEQUENCER_OT_perspective_activate(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         return nodes.get_active_strip(context) is not None
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context):
         bpy.ops.wm.tool_set_by_id(name=TOOL_IDNAME)
         return {'FINISHED'}
 
@@ -62,10 +62,10 @@ class SEQUENCER_OT_perspective_reset(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         return any(nodes.has_perspective(s) for s in _target_strips(context))
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context):
         count = 0
         cleared = 0
         for strip in _target_strips(context):
@@ -96,10 +96,10 @@ class SEQUENCER_OT_perspective_clear(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         return any(nodes.has_perspective(s) for s in _target_strips(context))
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context):
         scene = nodes.get_sequencer_scene(context)
         count = sum(1 for strip in _target_strips(context) if nodes.clear(strip, scene))
         self.report({'INFO'}, f"Cleared perspective from {count} strip(s)")
@@ -116,7 +116,7 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         # The active strip, not the selection: this is the button in the
         # panel's warning box, and the warning is about the strip the panel is
         # drawing. read_pin answers identity for a strip with no transform, so
@@ -126,7 +126,7 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
             return False
         return not space.is_convex_quad(nodes.read_pin(strip))
 
-    def execute(self, context):
+    def execute(self, context: bpy.types.Context):
         """
         Repair the quad by moving whichever single corner has least to travel.
 
@@ -142,14 +142,18 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
             self.report({'ERROR'}, "No strip to repair")
             return {'CANCELLED'}
 
-        corners = [tuple(corner) for corner in nodes.read_pin(strip)]
+        # Kept as plain (u, v) pairs the whole way through, which is what
+        # write_pin documents taking. constrain_corner answers with a Vector,
+        # so each accepted result is unpacked back into a pair rather than
+        # leaving the list holding two different types.
+        corners = [(corner[0], corner[1]) for corner in nodes.read_pin(strip)]
         best = None
         for index in range(4):
             moved = space.constrain_corner(corners, index, corners[index])
             if moved is None:
                 continue
             candidate = list(corners)
-            candidate[index] = moved
+            candidate[index] = (moved[0], moved[1])
             if not space.is_convex_quad(candidate):
                 continue
             travel = ((moved[0] - corners[index][0]) ** 2
@@ -167,7 +171,7 @@ class SEQUENCER_OT_perspective_make_convex(bpy.types.Operator):
             return {'CANCELLED'}
 
         _travel, index, moved = best
-        corners[index] = moved
+        corners[index] = (moved[0], moved[1])
         nodes.write_pin(strip, scene, corners)
 
         # The same auto-key the drag does, on the same corner-only basis - and
@@ -208,13 +212,13 @@ class PERSPECTIVE_PT_perspective(bpy.types.Panel):
     bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
-    def poll(cls, context):
+    def poll(cls, context: bpy.types.Context):
         strip = getattr(context, "active_strip", None)
         # Sound strips have no image to distort, and match how Blender polls
         # its own STRIP_PT_adjust_transform and STRIP_PT_adjust_crop.
         return strip is not None and strip.type != 'SOUND'
 
-    def draw(self, context):
+    def draw(self, context: bpy.types.Context):
         """
         Draw the filter and the four corners, transform or no transform.
 
@@ -232,7 +236,10 @@ class PERSPECTIVE_PT_perspective(bpy.types.Panel):
         no decorator column at all, and the values look unanimatable even though
         they are not.
         """
-        layout = self.layout
+        # The stubs type Panel.layout as Optional. Blender never calls draw()
+        # without one, and no annotation can restate a property's type, so the
+        # lie is narrowed once here rather than at each of the seven uses.
+        layout: bpy.types.UILayout = self.layout  # pyright: ignore[reportAssignmentType]
         strip = context.active_strip
         modifier = nodes.find_modifier(strip) if strip else None
         node = nodes.get_corner_pin_node(modifier.node_group) if modifier else None
@@ -247,7 +254,8 @@ class PERSPECTIVE_PT_perspective(bpy.types.Panel):
         layout.use_property_split = True
         layout.use_property_decorate = True
         # Blender's own Transform and Crop panels gray out on a muted strip.
-        layout.active = not strip.mute
+        # poll() has already refused a context with no active strip.
+        layout.active = not strip.mute  # pyright: ignore[reportOptionalMemberAccess]
 
         # The handover check is what keeps a drag that has just created the
         # transform from being cut off by its own success - see

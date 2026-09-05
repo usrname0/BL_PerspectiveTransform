@@ -90,10 +90,23 @@ def _begin_drag(gizmo_module, nodes, space, scene, strip, index):
     handle = gizmo_module.PERSPECTIVE_GT_perspective_handle
 
     class _Stub:
-        pass
+        """A bare object wearing the two drag methods under test.
 
-    _Stub._drag_to = handle._drag_to
-    _Stub._accept_corner = handle._accept_corner
+        The state they read is declared here rather than bolted on after the
+        fact, so the double says what it stands in for and a reader can see
+        the drag's whole working set in one place.
+        """
+
+        handle_index: int
+        _pin_on_invoke: list
+        _pin_corners: list
+        _edit_node: object
+        _drag_matrix: object
+        _last_mouse: tuple
+
+        _drag_to = handle._drag_to
+        _accept_corner = handle._accept_corner
+
     stub = _Stub()
     stub.handle_index = index
     stub._pin_on_invoke = nodes.read_pin(strip)
@@ -756,7 +769,8 @@ def test_make_convex_repairs_a_concave_quad():
                                        active_strip=strip):
             if not ops.SEQUENCER_OT_perspective_make_convex.poll(bpy.context):
                 failures.append("the operator did not poll on a concave quad")
-            result = bpy.ops.sequencer.perspective_make_convex()
+            # The addon's own operator, which no stub can know about.
+            result = bpy.ops.sequencer.perspective_make_convex()  # pyright: ignore[reportAttributeAccessIssue]
             if 'FINISHED' not in result:
                 failures.append(f"the operator returned {result}")
             still_offered = ops.SEQUENCER_OT_perspective_make_convex.poll(bpy.context)
@@ -813,7 +827,7 @@ def test_make_convex_overwrites_a_bad_keyframe():
         with bpy.context.temp_override(scene=scene, sequencer_scene=scene,
                                        active_strip=strip,
                                        tool_settings=scene.tool_settings):
-            bpy.ops.sequencer.perspective_make_convex()
+            bpy.ops.sequencer.perspective_make_convex()  # pyright: ignore[reportAttributeAccessIssue]
 
     repaired = tuple(float(v) for v in nodes.read_pin(strip)[2])
     scene.frame_set(5)

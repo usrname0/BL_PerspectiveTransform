@@ -60,7 +60,9 @@ def make_source_image(path, width=512, height=512):
         x0, x1 = int(u0 * width), int(u1 * width)
         y0, y1 = int(v0 * height), int(v1 * height)
         pixels[y0:y1, x0:x1, :3] = rgb
-    image.pixels.foreach_set(pixels.ravel())
+    # foreach_set takes any buffer; the stub asks for a Sequence, which an
+    # ndarray is not, and passing a list instead would defeat the point of it.
+    image.pixels.foreach_set(pixels.ravel())  # pyright: ignore[reportArgumentType]
     image.filepath_raw = path
     image.file_format = 'PNG'
     image.save()
@@ -83,8 +85,12 @@ def build_corner_pin_group(name, pin=IDENTITY_PIN, prescale=None):
         bpy.types.NodeTree: the created group
     """
     group = bpy.data.node_groups.new(name, 'CompositorNodeTree')
-    group.interface.new_socket("Image", in_out='INPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket("Image", in_out='OUTPUT', socket_type='NodeSocketColor')
+    # NodeTree.interface is never None; the stubs make every pointer property
+    # Optional. Same suppression as operators/perspective_nodes.py.
+    group.interface.new_socket(  # pyright: ignore[reportOptionalMemberAccess]
+        "Image", in_out='INPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket(  # pyright: ignore[reportOptionalMemberAccess]
+        "Image", in_out='OUTPUT', socket_type='NodeSocketColor')
 
     node_in = group.nodes.new('NodeGroupInput')
     node_out = group.nodes.new('NodeGroupOutput')
@@ -93,7 +99,9 @@ def build_corner_pin_group(name, pin=IDENTITY_PIN, prescale=None):
     source = node_in.outputs[0]
     if prescale is not None:
         transform = group.nodes.new('CompositorNodeTransform')
-        transform.inputs['Scale'].default_value = prescale
+        # default_value lives on the concrete socket class, not on the
+        # NodeSocket the inputs collection is typed as.
+        transform.inputs['Scale'].default_value = prescale  # pyright: ignore[reportAttributeAccessIssue]
         group.links.new(source, transform.inputs['Image'])
         source = transform.outputs['Image']
 
@@ -101,7 +109,7 @@ def build_corner_pin_group(name, pin=IDENTITY_PIN, prescale=None):
     group.links.new(corner_pin.outputs['Image'], node_out.inputs[0])
 
     for socket_name, value in zip(SOCKET_NAMES, pin):
-        corner_pin.inputs[socket_name].default_value = value
+        corner_pin.inputs[socket_name].default_value = value  # pyright: ignore[reportAttributeAccessIssue]
 
     return group
 
@@ -119,7 +127,10 @@ def make_scene(name, res_x=512, res_y=512):
     scene.frame_start = scene.frame_end = 1
     # Standard view transform keeps the quadrant colours readable; AgX would
     # tone-map them into something the classifier cannot separate.
-    scene.view_settings.view_transform = 'Standard'
+    # view_settings is never None, and view_transform is writable whatever the
+    # stub says about assigning to it.
+    view = scene.view_settings
+    view.view_transform = 'Standard'  # pyright: ignore[reportAttributeAccessIssue, reportOptionalMemberAccess]
     return scene
 
 
@@ -189,7 +200,8 @@ def render_scene(scene, tag, frame=None):
     # any single frame reads back the file it actually wrote.
     path = os.path.join(out_dir, "{}_{:04d}.png".format(tag, scene.frame_start))
     image = bpy.data.images.load(path)
-    buffer = np.zeros(len(image.pixels), dtype=np.float32)
+    # bpy_prop_array is sized at run time; the stub does not declare __len__.
+    buffer = np.zeros(len(image.pixels), dtype=np.float32)  # pyright: ignore[reportArgumentType]
     image.pixels.foreach_get(buffer)
     result = buffer.reshape((scene.render.resolution_y, scene.render.resolution_x, 4))
     bpy.data.images.remove(image)

@@ -219,10 +219,19 @@ def test_gizmo_commits_the_drag_from_exit():
 
     # --- behaviour: a real drag commits ---------------------------------
     class _Stub:
-        pass
+        """A bare object wearing the two end-of-drag methods under test.
 
-    _Stub._finish_edit = handle._finish_edit
-    _Stub._restore = handle._restore
+        The state they read is declared here rather than bolted on after the
+        fact, so the double says what it stands in for.
+        """
+
+        handle_index: int
+        _pin_on_invoke: list
+        _edit_node: object
+
+        _finish_edit = handle._finish_edit
+        _restore = handle._restore
+
     stub = _Stub()
 
     before = [tuple(c) for c in nodes.read_pin(strip)]

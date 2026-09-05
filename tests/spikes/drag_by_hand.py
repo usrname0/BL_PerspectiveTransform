@@ -68,7 +68,7 @@ def _source_image():
     pixels[0:256, 256:512, :3] = (0.2, 0.9, 0.2)
     pixels[256:512, 0:256, :3] = (0.2, 0.4, 0.9)
     pixels[256:512, 256:512, :3] = (0.9, 0.9, 0.2)
-    image.pixels.foreach_set(pixels.ravel())
+    image.pixels.foreach_set(pixels.ravel())  # pyright: ignore[reportArgumentType]
     image.filepath_raw = path
     image.file_format = 'PNG'
     image.save()

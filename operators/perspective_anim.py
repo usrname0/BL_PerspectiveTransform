@@ -224,7 +224,8 @@ def clear_animation(strip):
             removed += 1
 
     # Drop the action entirely once nothing of ours is left in it, so the strip
-    # stops appearing as an animated channel in the Dope Sheet.
+    # stops appearing as an animated channel in the Dope Sheet. A node here
+    # means a group here - _corner_pin returns both or neither.
     if removed and not any(True for _ in _iter_fcurve_owners(anim_data)):
-        group.animation_data_clear()
+        group.animation_data_clear()  # pyright: ignore[reportOptionalMemberAccess]
     return removed

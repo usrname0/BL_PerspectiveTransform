@@ -37,6 +37,18 @@ class _RecordingLayout:
         return self
 
 
+class _RecordingMenu:
+    """What Blender passes an appended menu draw function as `self`.
+
+    A named class rather than a type() call: the checker reads a three-argument
+    type("Menu", ...) as bpy.types.Menu, whose own layout is a different thing
+    entirely.
+    """
+
+    def __init__(self):
+        self.layout = _RecordingLayout()
+
+
 class _PreviewSpace:
     view_type = 'PREVIEW'
 
@@ -58,7 +70,7 @@ def _check_menu_operator_context(addon):
     """
     failures = []
     for menu_name, func in addon._MENUS:
-        menu = type("Menu", (), {"layout": _RecordingLayout()})()
+        menu = _RecordingMenu()
         func(menu, _PreviewContext())
         if not menu.layout.drawn:
             failures.append(f"{menu_name}: drew nothing in a preview space")

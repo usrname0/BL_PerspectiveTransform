@@ -107,7 +107,9 @@ def measure_margin(factors=(0.0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
     rows = []
     try:
         for factor in factors:
-            space.CONVEX_MARGIN = EPS * factor
+            # Sweeping the constant is the whole point of the spike, and a
+            # module is not a class the checker will let you assign into.
+            space.CONVEX_MARGIN = EPS * factor  # pyright: ignore[reportAttributeAccessIssue]
             rng = random.Random(1)
             rejected = 0
             worst = None
@@ -130,7 +132,7 @@ def measure_margin(factors=(0.0, 1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1),
                     worst = smallest
             rows.append((factor, rejected, worst))
     finally:
-        space.CONVEX_MARGIN = original
+        space.CONVEX_MARGIN = original  # pyright: ignore[reportAttributeAccessIssue]
     return trials, rows
 
 

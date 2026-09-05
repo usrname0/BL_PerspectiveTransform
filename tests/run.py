@@ -17,7 +17,7 @@ import sys
 import traceback
 
 SUITES = ("test_addon", "test_space", "test_render", "test_nodes", "test_anim",
-          "test_convex")
+          "test_convex", "test_callbacks")
 
 
 def main():

@@ -173,7 +173,7 @@ def part_b_polling():
     poll()
     for label, extra in (("1 strip", 0), ("40 strips", 39)):
         for index in range(extra):
-            filler = scene.sequence_editor.strips.new_effect(
+            filler = scene.sequence_editor.strips.new_effect(  # pyright: ignore[reportOptionalMemberAccess]
                 name="filler_%d" % index, type='COLOR', channel=2 + index % 8,
                 frame_start=1, length=10)
             filler.select = False

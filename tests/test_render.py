@@ -41,8 +41,8 @@ def make_movie(source, failures):
     scene.frame_end = 5
     scene.render.image_settings.media_type = 'VIDEO'
     scene.render.image_settings.file_format = 'FFMPEG'
-    scene.render.ffmpeg.format = 'MPEG4'
-    scene.render.ffmpeg.codec = 'H264'
+    scene.render.ffmpeg.format = 'MPEG4'  # pyright: ignore[reportOptionalMemberAccess]
+    scene.render.ffmpeg.codec = 'H264'  # pyright: ignore[reportOptionalMemberAccess]
     strip = add_image_strip(scene, source)
     strip.frame_final_duration = 5
     scene.render.filepath = os.path.join(scratch_dir(), "clip")

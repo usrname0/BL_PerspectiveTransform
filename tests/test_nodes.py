@@ -63,7 +63,7 @@ def check_unshare_on_duplicate(source, failures):
     strip_a = add_image_strip(scene, source)
     nodes.write_pin(strip_a, scene, SQUEEZE_PIN)
 
-    strip_b = scene.sequence_editor.strips.new_image(
+    strip_b = scene.sequence_editor.strips.new_image(  # pyright: ignore[reportOptionalMemberAccess]
         name="second", filepath=source, channel=2, frame_start=1)
     shared_group = nodes.find_modifier(strip_a).node_group
     modifier_b = nodes.ensure_modifier(strip_b, scene)
@@ -118,9 +118,12 @@ def check_frame_roundtrip(source, failures):
     """Corners set from frame space must read back to the same frame positions."""
     scene = make_scene("nodes_frame")
     strip = add_image_strip(scene, source)
-    strip.transform.scale_x = strip.transform.scale_y = 0.6
-    strip.transform.rotation = 0.4
-    strip.use_flip_x = True
+    # transform and use_flip_x belong to the concrete strip classes, not to
+    # the Strip that add_image_strip is typed as returning. See BLENDER.md ->
+    # Every croppable strip has a transform.
+    strip.transform.scale_x = strip.transform.scale_y = 0.6  # pyright: ignore[reportAttributeAccessIssue]
+    strip.transform.rotation = 0.4  # pyright: ignore[reportAttributeAccessIssue]
+    strip.use_flip_x = True  # pyright: ignore[reportAttributeAccessIssue]
 
     nodes.write_pin(strip, scene, SQUEEZE_PIN)
     target = core.get_corners_in_frame(strip, scene)
@@ -147,7 +150,7 @@ def check_panel_defaults(source, failures):
     defaults = import_addon_module("operators.perspective_defaults")
     scene = make_scene("nodes_defaults")
     strip = add_image_strip(scene, source)
-    scene.sequence_editor.active_strip = strip
+    scene.sequence_editor.active_strip = strip  # pyright: ignore[reportOptionalMemberAccess]
 
     defaults.register_perspective_defaults()
     try:

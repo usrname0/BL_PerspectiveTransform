@@ -17,6 +17,8 @@ group serve every strip. Targeting 5.0 means one group per strip instead, so
 this module owns creating, un-sharing and cleaning up those datablocks.
 """
 
+from typing import cast
+
 import bpy
 from mathutils import Vector
 
@@ -114,8 +116,13 @@ def build_node_group(name):
     group = bpy.data.node_groups.new(name, 'CompositorNodeTree')
     _tag_group(group)
 
-    group.interface.new_socket("Image", in_out='INPUT', socket_type='NodeSocketColor')
-    group.interface.new_socket("Image", in_out='OUTPUT', socket_type='NodeSocketColor')
+    # NodeTree.interface is never None - measured on 5.0.1 and 5.2.1 - but the
+    # stubs make every pointer property Optional and there are far too many to
+    # correct one at a time.
+    group.interface.new_socket(  # pyright: ignore[reportOptionalMemberAccess]
+        "Image", in_out='INPUT', socket_type='NodeSocketColor')
+    group.interface.new_socket(  # pyright: ignore[reportOptionalMemberAccess]
+        "Image", in_out='OUTPUT', socket_type='NodeSocketColor')
 
     node_in = group.nodes.new('NodeGroupInput')
     corner_pin = group.nodes.new('CompositorNodeCornerPin')
@@ -128,8 +135,14 @@ def build_node_group(name):
     group.links.new(node_in.outputs[0], corner_pin.inputs['Image'])
     group.links.new(corner_pin.outputs['Image'], node_out.inputs[0])
 
+    # A Corner Pin corner is a NodeSocketVectorFactor2D on 5.0.1 and 5.2.1;
+    # default_value belongs to that subclass, not to the NodeSocket the
+    # collection is typed as. The stub then declares it a bpy_prop_array and
+    # so refuses the sequence assignment that is the actual API.
     for socket_name, value in zip(CORNER_SOCKETS, IDENTITY_PIN):
-        corner_pin.inputs[socket_name].default_value = value
+        socket = cast(bpy.types.NodeSocketVectorFactor2D,
+                      corner_pin.inputs[socket_name])
+        socket.default_value = value  # pyright: ignore[reportAttributeAccessIssue]
 
     return group
 
